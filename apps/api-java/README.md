@@ -21,7 +21,8 @@ single base URL (`:8080`).
 | inventory (atomic conditional decrement, NFR1) | ✅ ported |
 | orders (FR15 confirm flow, FR10 address disclosure, cancel/restore) | ✅ ported |
 | chat agent (Spring AI tool-calling, all tools native) | ✅ ported |
-| menus CRUD (Story 2.1/2.2), delivery, payments (Stripe, 3.4), community, trust | ⏳ not started |
+| menus CRUD + ready-time windows (Story 2.1/2.2) — dish CRUD, draft menu days, window validation, publish flow | ✅ new (Java-only) |
+| delivery (4.x), payments (Stripe, 3.4), community, trust, live portion SSE (2.3 AC3/AC4) | ⏳ not started |
 
 The NestJS `apps/api` is no longer needed for the web flow — everything the frontend and
 the MCP server call is served natively here. It stays in the repo as the reference

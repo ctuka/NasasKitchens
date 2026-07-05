@@ -28,8 +28,10 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/health", "/error", "/auth/register", "/auth/login", "/auth/refresh")
                         .permitAll()
-                        // search / public profile / published menu are public, like the NestJS service
-                        .requestMatchers(org.springframework.http.HttpMethod.GET, "/kitchens/**")
+                        // search / public profile / published menu are public, like the NestJS service;
+                        // seller endpoints under /kitchens/{id}/... (dishes, menu-days) stay authenticated
+                        .requestMatchers(org.springframework.http.HttpMethod.GET,
+                                "/kitchens/search", "/kitchens/*", "/kitchens/*/menu")
                         .permitAll()
                         .anyRequest()
                         .authenticated())
