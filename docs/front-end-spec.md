@@ -86,6 +86,27 @@ separate role-switched shell.
 - FRs: FR20. Structured sub-scores (storage, prep surfaces, temperature control,
   personal hygiene, documentation), photo evidence, offline draft, submit-once lock.
 
+## Brand & Visual Identity (from approved brand board)
+- **Logo**: cooking pot with heart + leaf sprouts; wordmark "Nanas' Kitchen".
+- **Tagline**: "Real Food. Made by Neighbors." — secondary: "Local kitchens. Real
+  recipes. Made with love. Just for you."
+- **Palette**: primary orange (#E8720C vibes — CTAs, brand accents), deep green
+  (#2E4A2E — headings, trust badges like "Support Local · Stronger Together"),
+  warm cream background (#FAF3E4), soft food-photography imagery.
+- **Feature pillars** (marketing + empty states): Find Local Cooks · Homemade Meals ·
+  AI Chat & Easy Order · Pickup or Delivery · Personalized Menus.
+- **Mobile home reference**: greeting ("Hungry for something delicious?"), search bar
+  (meals/cuisines/cooks), "Made with ♥ near you — within 10 miles" location card,
+  horizontal "Top Picks Near You" dish cards (photo, dish, kitchen, rating, distance),
+  AI Chat Assistant entry card, bottom tabs Home · Orders · (+) · Chat · Profile.
+
+## Platform Split
+- **Web (Next.js)**: buyer flows with SSR/SEO on kitchen pages; seller and inspector
+  portals.
+- **Mobile (Kotlin Multiplatform + Compose Multiplatform)**: single shared Kotlin
+  codebase for iOS and Android — shared Compose UI, domain models, and Ktor REST/SSE
+  client hitting the same Spring Boot API (NFR3: no mobile-only endpoints).
+
 ## Cross-cutting
 - **Accessibility**: WCAG 2.1 AA; all flows completable via the conversational channel
   as an alternative modality (NFR7); badges use text + color; dynamic type support.

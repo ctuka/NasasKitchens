@@ -4,10 +4,11 @@
 BMAD dokumanlari `docs/` altinda; kod, oradaki hikayeleri uygular.
 
 Backend Java'ya tasindi (strangler migration): `apps/api-java` (Spring Boot 4 + Spring AI)
-ana API'dir (:8080) — auth, kitchens, inventory, orders ve AI chat agent'i dahil. Frontend
-(Next.js, `apps/web`) ve MCP sunucusu yalnizca :8080 ile konusur; eski NestJS API'si
-(:3001) kalan hikayeler (menu CRUD, teslimat, Stripe) tasinana kadar referans olarak durur.
-Detay: `apps/api-java/README.md`.
+ana API'dir (:8080) — auth, kitchens, menuler, inventory, orders, teslimat ve AI chat
+agent'i dahil. Frontend (Next.js, `apps/web`) ve MCP sunucusu yalnizca :8080 ile konusur;
+eski NestJS API'si (:3001) referans olarak durur. Mobil uygulama Kotlin Multiplatform +
+Compose Multiplatform ile (iOS + Android tek codebase, `apps/mobile`) ayni REST/SSE
+API'sini kullanacak. Detay: `apps/api-java/README.md`, `docs/front-end-spec.md`.
 
 ## Calistirma
 ```bash
