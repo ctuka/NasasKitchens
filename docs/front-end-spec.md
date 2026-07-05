@@ -87,7 +87,9 @@ separate role-switched shell.
   personal hygiene, documentation), photo evidence, offline draft, submit-once lock.
 
 ## Brand & Visual Identity (from approved brand board)
-- **Logo**: cooking pot with heart + leaf sprouts; wordmark "Nanas' Kitchen".
+- **Logo**: cooking pot with heart + leaf sprouts; wordmark "Nanas' Kitchens"
+  (canonical name is plural — the brand-board draft showed singular; use plural
+  everywhere, logo asset to be regenerated accordingly).
 - **Tagline**: "Real Food. Made by Neighbors." — secondary: "Local kitchens. Real
   recipes. Made with love. Just for you."
 - **Palette**: primary orange (#E8720C vibes — CTAs, brand accents), deep green
