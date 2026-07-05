@@ -1,6 +1,7 @@
 package com.nanaskitchens.api.orders;
 
 import com.nanaskitchens.api.inventory.InventoryService;
+import com.nanaskitchens.api.inventory.PortionsChanged;
 import com.nanaskitchens.api.kitchens.AddressCrypto;
 import com.nanaskitchens.api.kitchens.dto.MenuDayResponse;
 import com.nanaskitchens.api.orders.dto.CreateOrderRequest;
@@ -37,13 +38,19 @@ public class OrdersService {
     private final InventoryService inventory;
     private final AddressCrypto addressCrypto;
     private final JsonMapper jsonMapper;
+    private final org.springframework.context.ApplicationEventPublisher eventPublisher;
 
     public OrdersService(
-            JdbcClient db, InventoryService inventory, AddressCrypto addressCrypto, JsonMapper jsonMapper) {
+            JdbcClient db,
+            InventoryService inventory,
+            AddressCrypto addressCrypto,
+            JsonMapper jsonMapper,
+            org.springframework.context.ApplicationEventPublisher eventPublisher) {
         this.db = db;
         this.inventory = inventory;
         this.addressCrypto = addressCrypto;
         this.jsonMapper = jsonMapper;
+        this.eventPublisher = eventPublisher;
     }
 
     /**
@@ -153,6 +160,9 @@ public class OrdersService {
                 .param("after", jsonMapper.writeValueAsString(summary))
                 .update();
 
+        // Delivered AFTER_COMMIT: SSE subscribers see the new counts only once they're durable.
+        eventPublisher.publishEvent(
+                new PortionsChanged(input.items().stream().map(CreateOrderRequest.Item::menuItemId).toList()));
         return Map.of("confirmed", true, "order", detail(buyerId, orderId));
     }
 
@@ -251,6 +261,7 @@ public class OrdersService {
         }
         db.sql("UPDATE \"Order\" SET status = 'cancelled' WHERE id = :id").param("id", orderId).update();
         order.put("status", "cancelled");
+        eventPublisher.publishEvent(new PortionsChanged(items.stream().map(ItemQty::menuItemId).toList()));
         return order;
     }
 

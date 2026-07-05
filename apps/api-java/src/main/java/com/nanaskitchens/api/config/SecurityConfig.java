@@ -31,7 +31,8 @@ public class SecurityConfig {
                         // search / public profile / published menu are public, like the NestJS service;
                         // seller endpoints under /kitchens/{id}/... (dishes, menu-days) stay authenticated
                         .requestMatchers(org.springframework.http.HttpMethod.GET,
-                                "/kitchens/search", "/kitchens/*", "/kitchens/*/menu")
+                                "/kitchens/search", "/kitchens/*", "/kitchens/*/menu",
+                                "/kitchens/*/portions/stream")
                         .permitAll()
                         .anyRequest()
                         .authenticated())
