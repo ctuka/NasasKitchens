@@ -1,0 +1,41 @@
+server:
+  port: ${JAVA_API_PORT:8080}
+
+spring:
+  application:
+    name: nanas-kitchens-api
+  web:
+    error:
+      # Clients (web UI, agent) read error codes like MENU_NOT_PUBLISHED from the message
+      # field, matching the NestJS error body shape.
+      include-message: always
+  datasource:
+    # Shares the Prisma-managed culture_eats database with the NestJS service (strangler
+    # migration: both backends see the same data while modules move over one by one).
+    # stringtype=unspecified lets JDBC write into Prisma's Postgres enum columns ("Role", ...).
+    url: ${JDBC_DATABASE_URL:jdbc:postgresql://localhost:5432/culture_eats?stringtype=unspecified}
+    username: ${DB_USER:culture}
+    password: ${DB_PASSWORD:culture}
+  jpa:
+    # Prisma owns the schema/migrations during the transition — never let Hibernate touch it.
+    hibernate:
+      ddl-auto: none
+    open-in-view: false
+    properties:
+      # Prisma tables/columns are quoted camelCase ("User"."passwordHash"); quote everything.
+      hibernate.globally_quoted_identifiers: true
+  ai:
+    anthropic:
+      api-key: ${ANTHROPIC_API_KEY:}
+      chat:
+        options:
+          model: claude-opus-4-8
+
+app:
+  jwt:
+    # Shared with the NestJS service's JWT_SECRET so access tokens are valid on both
+    # backends during the migration. Must be >= 32 bytes (HS256 key requirement).
+    secret: ${JWT_SECRET:please-change-this-jwt-secret-in-prod-32b}
+    access-token-ttl-minutes: 15
+    refresh-token-ttl-days: 30
+  address-enc-key: ${ADDRESS_ENC_KEY:32-byte-hex-key-change-me-0000000000}
