@@ -1,0 +1,102 @@
+/* Brand tokens — front-end-spec.md "Brand & Visual Identity" */
+:root {
+  --brand-orange: #e8720c;
+  --brand-orange-dark: #c95f05;
+  --brand-green: #2e4a2e;
+  --brand-cream: #faf3e4;
+  --brand-ink: #24281f;
+  --brand-muted: #6b7280;
+  --brand-border: #e5decb;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: var(--brand-cream);
+  color: var(--brand-ink);
+}
+
+a {
+  color: var(--brand-green);
+}
+
+.card {
+  background: #fff;
+  border: 1px solid var(--brand-border);
+  border-radius: 16px;
+  padding: 24px;
+}
+
+.field {
+  display: block;
+  width: 100%;
+  padding: 12px 14px;
+  margin: 6px 0 16px;
+  border: 1px solid var(--brand-border);
+  border-radius: 10px;
+  font-size: 15px;
+  background: #fff;
+}
+
+.field:focus {
+  outline: 2px solid var(--brand-orange);
+  border-color: var(--brand-orange);
+}
+
+.btn-primary {
+  display: inline-block;
+  width: 100%;
+  padding: 12px 20px;
+  background: var(--brand-orange);
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-primary:hover {
+  background: var(--brand-orange-dark);
+}
+
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.form-error {
+  background: #fef2f2;
+  color: #b91c1c;
+  border: 1px solid #fecaca;
+  border-radius: 10px;
+  padding: 10px 14px;
+  margin-bottom: 16px;
+  font-size: 14px;
+}
+
+.role-toggle {
+  display: flex;
+  gap: 8px;
+  margin: 6px 0 16px;
+}
+
+.role-toggle button {
+  flex: 1;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid var(--brand-border);
+  background: #fff;
+  font-size: 15px;
+  cursor: pointer;
+}
+
+.role-toggle button[aria-pressed="true"] {
+  border-color: var(--brand-orange);
+  background: #fdf0e3;
+  font-weight: 600;
+}
