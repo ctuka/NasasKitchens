@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 import com.nanaskitchens.api.kitchens.dto.MenuDayResponse;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Same nested shape the NestJS detail endpoint returned (order + items + menuItem + dish +
@@ -25,7 +26,8 @@ public record OrderDetailResponse(
         LocalDateTime createdAt,
         List<Item> items,
         String kitchenName,
-        String pickupAddress) {
+        String pickupAddress,
+        Map<String, Object> deliveryJob) {
 
     public record Item(
             String id,

@@ -1,5 +1,6 @@
 package com.nanaskitchens.api.orders;
 
+import com.nanaskitchens.api.delivery.DeliveryService;
 import com.nanaskitchens.api.inventory.InventoryService;
 import com.nanaskitchens.api.inventory.PortionsChanged;
 import com.nanaskitchens.api.kitchens.AddressCrypto;
@@ -34,23 +35,33 @@ public class OrdersService {
     private static final double COMMISSION_RATE = 0.15;
     private static final Set<String> FINAL_STATUSES = Set.of("completed", "cancelled");
 
+    /** Story 4.1 seller transitions: current status -> allowed next statuses. */
+    private static final Map<String, Set<String>> SELLER_TRANSITIONS = Map.of(
+            "confirmed", Set.of("accepted", "declined"),
+            "accepted", Set.of("preparing"),
+            "preparing", Set.of("ready"),
+            "ready", Set.of("completed"));
+
     private final JdbcClient db;
     private final InventoryService inventory;
     private final AddressCrypto addressCrypto;
     private final JsonMapper jsonMapper;
     private final org.springframework.context.ApplicationEventPublisher eventPublisher;
+    private final DeliveryService deliveryService;
 
     public OrdersService(
             JdbcClient db,
             InventoryService inventory,
             AddressCrypto addressCrypto,
             JsonMapper jsonMapper,
-            org.springframework.context.ApplicationEventPublisher eventPublisher) {
+            org.springframework.context.ApplicationEventPublisher eventPublisher,
+            DeliveryService deliveryService) {
         this.db = db;
         this.inventory = inventory;
         this.addressCrypto = addressCrypto;
         this.jsonMapper = jsonMapper;
         this.eventPublisher = eventPublisher;
+        this.deliveryService = deliveryService;
     }
 
     /**
@@ -234,7 +245,119 @@ public class OrdersService {
                 order.readySlot(), order.fulfillment(), order.totalCents(), order.commissionCents(),
                 order.paymentIntentId(), order.idempotencyKey(), order.createdAt(), items,
                 order.kitchenName(),
-                discloseAddress ? addressCrypto.decrypt(order.addressEncrypted()) : null);
+                discloseAddress ? addressCrypto.decrypt(order.addressEncrypted()) : null,
+                deliveryService.findByOrderId(orderId));
+    }
+
+    /**
+     * Story 4.1 — seller lifecycle transition. On decline, portions are restored in the same
+     * transaction (Story 2.3 AC2); on ready for a delivery order, the DeliveryJob is created
+     * via the provider interface (Story 4.2 AC2).
+     */
+    @Transactional
+    public Map<String, Object> transition(String sellerId, String orderId, String target) {
+        record Row(String status, String fulfillment, String kitchenSellerId) {
+        }
+        Row order = db.sql("""
+                SELECT o.status, o.fulfillment, k."sellerId" AS kitchen_seller_id
+                FROM "Order" o JOIN "Kitchen" k ON k.id = o."kitchenId"
+                WHERE o.id = :id
+                FOR UPDATE OF o
+                """)
+                .param("id", orderId)
+                .query((rs, n) -> new Row(
+                        rs.getString("status"), rs.getString("fulfillment"), rs.getString("kitchen_seller_id")))
+                .optional()
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
+        if (!sellerId.equals(order.kitchenSellerId())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        }
+        if (!SELLER_TRANSITIONS.getOrDefault(order.status(), Set.of()).contains(target)) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST, "INVALID_TRANSITION:" + order.status() + "->" + target);
+        }
+
+        if ("declined".equals(target)) {
+            record ItemQty(String menuItemId, int qty) {
+            }
+            List<ItemQty> items = db
+                    .sql("SELECT \"menuItemId\", qty FROM \"OrderItem\" WHERE \"orderId\" = :id")
+                    .param("id", orderId)
+                    .query((rs, n) -> new ItemQty(rs.getString("menuItemId"), rs.getInt("qty")))
+                    .list();
+            for (ItemQty item : items) {
+                inventory.restore(item.menuItemId(), item.qty()); // Story 2.3 AC2
+            }
+            eventPublisher.publishEvent(new PortionsChanged(items.stream().map(ItemQty::menuItemId).toList()));
+        }
+
+        db.sql("UPDATE \"Order\" SET status = :status WHERE id = :id")
+                .param("status", target)
+                .param("id", orderId)
+                .update();
+
+        Map<String, Object> deliveryJob = null;
+        if ("ready".equals(target) && "delivery".equals(order.fulfillment())) {
+            deliveryJob = deliveryService.createForOrder(orderId, sellerId);
+        }
+
+        db.sql("""
+                INSERT INTO "AuditLog" (id, actor, entity, action, "after")
+                VALUES (:id, :actor, :entity, 'order_status', :after::jsonb)
+                """)
+                .param("id", UUID.randomUUID().toString())
+                .param("actor", sellerId)
+                .param("entity", "Order:" + orderId)
+                .param("after", jsonMapper.writeValueAsString(
+                        Map.of("from", order.status(), "to", target)))
+                .update();
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("id", orderId);
+        result.put("status", target);
+        if (deliveryJob != null) {
+            result.put("deliveryJob", deliveryJob);
+        }
+        return result;
+    }
+
+    /** Story 4.1 — seller order dashboard listing for one kitchen. */
+    public List<Map<String, Object>> listForKitchen(String sellerId, String kitchenId, String status) {
+        String ownerId = db.sql("SELECT \"sellerId\" FROM \"Kitchen\" WHERE id = :id")
+                .param("id", kitchenId)
+                .query(String.class)
+                .optional()
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "KITCHEN_NOT_FOUND"));
+        if (!ownerId.equals(sellerId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        }
+        return db.sql("""
+                SELECT o.id, o.status, o."readySlot", o.fulfillment, o."totalCents", o."createdAt",
+                       (SELECT string_agg(d.name || ' x' || oi.qty, ', ' ORDER BY d.name)
+                        FROM "OrderItem" oi
+                        JOIN "MenuItem" mi ON mi.id = oi."menuItemId"
+                        JOIN "Dish" d ON d.id = mi."dishId"
+                        WHERE oi."orderId" = o.id) AS items_summary
+                FROM "Order" o
+                WHERE o."kitchenId" = :kitchenId
+                  AND (:status::text IS NULL OR o.status::text = :status)
+                ORDER BY o."createdAt" DESC
+                LIMIT 200
+                """)
+                .param("kitchenId", kitchenId)
+                .param("status", status, java.sql.Types.VARCHAR)
+                .query((rs, n) -> {
+                    Map<String, Object> row = new LinkedHashMap<>();
+                    row.put("id", rs.getString("id"));
+                    row.put("status", rs.getString("status"));
+                    row.put("readySlot", rs.getTimestamp("readySlot").toLocalDateTime());
+                    row.put("fulfillment", rs.getString("fulfillment"));
+                    row.put("totalCents", rs.getInt("totalCents"));
+                    row.put("createdAt", rs.getTimestamp("createdAt").toLocalDateTime());
+                    row.put("itemsSummary", rs.getString("items_summary"));
+                    return row;
+                })
+                .list();
     }
 
     @Transactional

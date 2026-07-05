@@ -23,7 +23,9 @@ single base URL (`:8080`).
 | chat agent (Spring AI tool-calling, all tools native) | ✅ ported |
 | menus CRUD + ready-time windows (Story 2.1/2.2) — dish CRUD, draft menu days, window validation, publish flow | ✅ new (Java-only) |
 | live portions SSE + manual correction (Story 2.3 AC3/AC4) — GET /kitchens/{id}/portions/stream, POST /inventory/menu-items/{id}/adjust | ✅ new (Java-only) |
-| delivery (4.x), payments (Stripe, 3.4), community, trust | ⏳ not started |
+| seller order lifecycle (Story 4.1) — accept/decline/preparing/ready/complete + GET /kitchens/{id}/orders; decline restores inventory | ✅ new (Java-only) |
+| delivery (Story 4.2) — provider interface + mock impl (DoorDash/Grubhub plug in when credentials exist), DeliveryJob on ready, HMAC-verified idempotent webhooks, delivered → order completed | ✅ new (mock provider) |
+| notifications (4.4), payments (Stripe, 3.4), community, trust | ⏳ not started |
 
 The NestJS `apps/api` is no longer needed for the web flow — everything the frontend and
 the MCP server call is served natively here. It stays in the repo as the reference

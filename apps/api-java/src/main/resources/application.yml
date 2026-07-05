@@ -39,3 +39,8 @@ app:
     access-token-ttl-minutes: 15
     refresh-token-ttl-days: 30
   address-enc-key: ${ADDRESS_ENC_KEY:32-byte-hex-key-change-me-0000000000}
+  delivery:
+    # mock | doordash | grubhub — mock ships until partner sandbox credentials exist
+    # (architecture.md risk mitigation: same provider interface, pickup-only launch flag).
+    provider: ${DELIVERY_PROVIDER:mock}
+    webhook-secret: ${DELIVERY_WEBHOOK_SECRET:dev-delivery-webhook-secret}
