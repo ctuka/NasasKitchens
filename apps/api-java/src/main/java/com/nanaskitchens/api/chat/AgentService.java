@@ -1,0 +1,70 @@
+package com.nanaskitchens.api.chat;
+
+import com.nanaskitchens.api.chat.dto.ChatMessage;
+import com.nanaskitchens.api.inventory.InventoryService;
+import com.nanaskitchens.api.kitchens.KitchensService;
+import com.nanaskitchens.api.orders.OrdersService;
+import java.util.List;
+import java.util.Map;
+import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.messages.Message;
+import org.springframework.ai.chat.messages.UserMessage;
+import org.springframework.stereotype.Service;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
+import tools.jackson.databind.json.JsonMapper;
+
+@Service
+public class AgentService {
+
+    private final ChatClient chatClient;
+    private final JsonMapper jsonMapper;
+    private final KitchensService kitchensService;
+    private final OrdersService ordersService;
+    private final InventoryService inventoryService;
+
+    public AgentService(
+            ChatClient.Builder chatClientBuilder,
+            JsonMapper jsonMapper,
+            KitchensService kitchensService,
+            OrdersService ordersService,
+            InventoryService inventoryService) {
+        this.chatClient = chatClientBuilder.defaultSystem(SystemPrompt.TEXT).build();
+        this.jsonMapper = jsonMapper;
+        this.kitchensService = kitchensService;
+        this.ordersService = ordersService;
+        this.inventoryService = inventoryService;
+    }
+
+    /**
+     * Runs the agentic tool-use loop and streams SSE events: {"type":"text","delta":"..."} then
+     * {"type":"done"} — same shape the NestJS AgentService emitted, so existing web/mobile clients
+     * don't need to change.
+     */
+    public Flux<String> streamChat(List<ChatMessage> messages, String buyerId) {
+        KitchenOrderTools tools =
+                new KitchenOrderTools(kitchensService, ordersService, inventoryService, jsonMapper, buyerId);
+
+        List<Message> history = messages.stream()
+                .<Message>map(m -> "assistant".equals(m.role())
+                        ? new AssistantMessage(m.content())
+                        : new UserMessage(m.content()))
+                .toList();
+
+        Flux<String> textDeltas = chatClient
+                .prompt()
+                .messages(history)
+                .tools(tools)
+                .stream()
+                .content()
+                .map(delta -> toEvent("text", delta));
+
+        return textDeltas.concatWith(Mono.just(toEvent("done", null)));
+    }
+
+    private String toEvent(String type, String delta) {
+        Map<String, Object> payload = delta == null ? Map.of("type", type) : Map.of("type", type, "delta", delta);
+        return jsonMapper.writeValueAsString(payload);
+    }
+}

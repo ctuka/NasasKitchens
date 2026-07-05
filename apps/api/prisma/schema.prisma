@@ -1,0 +1,170 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [postgis]
+}
+
+enum Role {
+  buyer
+  seller
+  inspector
+  admin
+}
+
+enum MenuDayStatus {
+  draft
+  published
+}
+
+enum OrderStatus {
+  pending
+  confirmed
+  accepted
+  declined
+  preparing
+  ready
+  completed
+  cancelled
+}
+
+enum Fulfillment {
+  pickup
+  delivery
+}
+
+enum DeliveryProvider {
+  doordash
+  grubhub
+  mock
+}
+
+model User {
+  id           String   @id @default(uuid())
+  role         Role
+  email        String   @unique
+  passwordHash String
+  phone        String?
+  locale       String   @default("en")
+  createdAt    DateTime @default(now())
+  kitchen      Kitchen?
+  orders       Order[]
+  refreshTokens RefreshToken[]
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  tokenHash String   @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+}
+
+model Kitchen {
+  id                   String    @id @default(uuid())
+  sellerId             String    @unique
+  seller               User      @relation(fields: [sellerId], references: [id])
+  name                 String
+  cuisineTag           String
+  description          String
+  photos               String[]
+  addressEncrypted     String
+  // geo: geography(Point,4326) — raw SQL migration ile eklenir (Prisma native desteklemiyor)
+  complianceAttestedAt DateTime?
+  attestationIp        String?
+  ratingAvg            Float?
+  ratingCount          Int       @default(0)
+  hygieneScoreTotal    Int?
+  hygieneScoredAt      DateTime?
+  menuDays             MenuDay[]
+  orders               Order[]
+  createdAt            DateTime  @default(now())
+}
+
+model Dish {
+  id          String   @id @default(uuid())
+  kitchenId   String
+  name        String
+  description String
+  photo       String?
+  priceCents  Int
+  dietaryTags String[]
+  menuItems   MenuItem[]
+}
+
+model MenuDay {
+  id           String        @id @default(uuid())
+  kitchenId    String
+  kitchen      Kitchen       @relation(fields: [kitchenId], references: [id])
+  date         DateTime      @db.Date
+  status       MenuDayStatus @default(draft)
+  readyWindows Json          // [{start:"17:00",end:"20:00",slotMinutes:30}]
+  items        MenuItem[]
+  @@unique([kitchenId, date])
+}
+
+model MenuItem {
+  id                String  @id @default(uuid())
+  menuDayId         String
+  menuDay           MenuDay @relation(fields: [menuDayId], references: [id])
+  dishId            String
+  dish              Dish    @relation(fields: [dishId], references: [id])
+  portionsTotal     Int
+  portionsRemaining Int
+  orderItems        OrderItem[]
+}
+
+model Order {
+  id              String      @id @default(uuid())
+  buyerId         String
+  buyer           User        @relation(fields: [buyerId], references: [id])
+  kitchenId       String
+  kitchen         Kitchen     @relation(fields: [kitchenId], references: [id])
+  menuDayId       String
+  status          OrderStatus @default(pending)
+  readySlot       DateTime
+  fulfillment     Fulfillment
+  totalCents      Int
+  commissionCents Int         @default(0)
+  paymentIntentId String?
+  idempotencyKey  String      @unique
+  items           OrderItem[]
+  deliveryJob     DeliveryJob?
+  createdAt       DateTime    @default(now())
+}
+
+model OrderItem {
+  id             String   @id @default(uuid())
+  orderId        String
+  order          Order    @relation(fields: [orderId], references: [id])
+  menuItemId     String
+  menuItem       MenuItem @relation(fields: [menuItemId], references: [id])
+  qty            Int
+  unitPriceCents Int
+}
+
+model DeliveryJob {
+  id          String           @id @default(uuid())
+  orderId     String           @unique
+  order       Order            @relation(fields: [orderId], references: [id])
+  provider    DeliveryProvider
+  externalId  String?
+  status      String           @default("created")
+  trackingUrl String?
+  feeCents    Int              @default(0)
+}
+
+model AuditLog {
+  id      String   @id @default(uuid())
+  actor   String
+  entity  String
+  action  String
+  before  Json?
+  after   Json?
+  at      DateTime @default(now())
+}
