@@ -4,6 +4,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { API } from "../lib/api";
+import { CUISINES, CUISINE_ICONS } from "../lib/cuisines";
 
 interface KitchenResult {
   id: string;
@@ -15,25 +16,6 @@ interface KitchenResult {
   portionsLeftToday: number;
   photo: string | null;
 }
-
-const CUISINES: { tag: string; label: string; icon: string }[] = [
-  { tag: "turkish", label: "Turkish", icon: "🇹🇷" },
-  { tag: "chinese", label: "Chinese", icon: "🇨🇳" },
-  { tag: "mexican", label: "Mexican", icon: "🇲🇽" },
-  { tag: "indian", label: "Indian", icon: "🇮🇳" },
-  { tag: "italian", label: "Italian", icon: "🇮🇹" },
-  { tag: "japanese", label: "Japanese", icon: "🇯🇵" },
-  { tag: "korean", label: "Korean", icon: "🇰🇷" },
-  { tag: "vietnamese", label: "Vietnamese", icon: "🇻🇳" },
-  { tag: "lebanese", label: "Lebanese", icon: "🇱🇧" },
-  { tag: "ethiopian", label: "Ethiopian", icon: "🇪🇹" },
-  { tag: "persian", label: "Persian", icon: "🇮🇷" },
-  { tag: "greek", label: "Greek", icon: "🇬🇷" },
-  { tag: "thai", label: "Thai", icon: "🇹🇭" },
-  { tag: "other", label: "Other", icon: "🍽️" },
-];
-
-const CUISINE_ICONS = Object.fromEntries(CUISINES.map((c) => [c.tag, c.icon]));
 
 // Demo fallback: seed data lives around Union Square, SF.
 const DEMO_LOCATION = { lat: 37.788, lng: -122.4075, label: "San Francisco (demo)" };
