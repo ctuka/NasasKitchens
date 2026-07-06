@@ -14,6 +14,9 @@ const prisma = new PrismaClient();
 // Test location: Union Square, San Francisco
 const CENTER = { lat: 37.788, lng: -122.4075 };
 
+// Demo food photography (Unsplash hotlinks) until seller photo upload (S3) ships.
+const IMG = (id: string) => `https://images.unsplash.com/photo-${id}?w=800&q=60`;
+
 const KITCHENS = [
   {
     seller: { email: "ayse@demo.com" },
@@ -21,11 +24,12 @@ const KITCHENS = [
     cuisineTag: "turkish",
     description: "Home-style Turkish classics: manti, dolma, fresh pide.",
     address: "350 Post St, San Francisco, CA",
+    photos: [IMG("1529006557810-274b9b2fc783")],
     lat: 37.7885, lng: -122.4078, // ~0.1 mi
     dishes: [
-      { name: "Manti (Turkish dumplings)", description: "Hand-folded beef dumplings with garlic yogurt", priceCents: 1450, dietaryTags: [], portions: 8 },
-      { name: "Vegetarian Dolma", description: "Grape leaves stuffed with rice, herbs, pine nuts", priceCents: 1150, dietaryTags: ["vegetarian", "vegan"], portions: 12 },
-      { name: "Lahmacun", description: "Thin crispy flatbread with spiced minced lamb", priceCents: 950, dietaryTags: [], portions: 10 },
+      { name: "Manti (Turkish dumplings)", description: "Hand-folded beef dumplings with garlic yogurt", priceCents: 1450, dietaryTags: [], portions: 8, photo: IMG("1534422298391-e4f8c172dddb") },
+      { name: "Vegetarian Dolma", description: "Grape leaves stuffed with rice, herbs, pine nuts", priceCents: 1150, dietaryTags: ["vegetarian", "vegan"], portions: 12, photo: IMG("1512621776951-a57141f2eefd") },
+      { name: "Lahmacun", description: "Thin crispy flatbread with spiced minced lamb", priceCents: 950, dietaryTags: [], portions: 10, photo: IMG("1565299624946-b28f40a0ae38") },
     ],
   },
   {
@@ -34,11 +38,12 @@ const KITCHENS = [
     cuisineTag: "chinese",
     description: "Bold Sichuan flavors from a family wok: mapo tofu, dan dan noodles.",
     address: "728 Pacific Ave, San Francisco, CA",
+    photos: [IMG("1455619452474-d2be8b1e70cd")],
     lat: 37.7967, lng: -122.4097, // ~0.6 mi
     dishes: [
-      { name: "Mapo Tofu", description: "Silky tofu in numbing-spicy chili bean sauce", priceCents: 1250, dietaryTags: ["vegetarian"], portions: 10 },
-      { name: "Dan Dan Noodles", description: "Hand-pulled noodles, sesame-chili sauce, minced pork", priceCents: 1350, dietaryTags: [], portions: 8 },
-      { name: "Cucumber Salad", description: "Smashed cucumber, garlic, black vinegar", priceCents: 650, dietaryTags: ["vegan", "gluten-free"], portions: 15 },
+      { name: "Mapo Tofu", description: "Silky tofu in numbing-spicy chili bean sauce", priceCents: 1250, dietaryTags: ["vegetarian"], portions: 10, photo: IMG("1504674900247-0877df9cc836") },
+      { name: "Dan Dan Noodles", description: "Hand-pulled noodles, sesame-chili sauce, minced pork", priceCents: 1350, dietaryTags: [], portions: 8, photo: IMG("1476224203421-9ac39bcb3327") },
+      { name: "Cucumber Salad", description: "Smashed cucumber, garlic, black vinegar", priceCents: 650, dietaryTags: ["vegan", "gluten-free"], portions: 15, photo: IMG("1546069901-ba9599a7e63c") },
     ],
   },
   {
@@ -47,11 +52,12 @@ const KITCHENS = [
     cuisineTag: "mexican",
     description: "Oaxacan mole, handmade tortillas, tamales like abuela made.",
     address: "2889 Mission St, San Francisco, CA",
+    photos: [IMG("1599974579688-8dbdd335c77f")],
     lat: 37.7517, lng: -122.4183, // ~2.6 mi
     dishes: [
-      { name: "Mole Negro con Pollo", description: "Chicken in 28-ingredient black mole, rice, tortillas", priceCents: 1650, dietaryTags: [], portions: 6 },
-      { name: "Tamales de Rajas", description: "Poblano & cheese tamales in banana leaf (2 pc)", priceCents: 1050, dietaryTags: ["vegetarian"], portions: 12 },
-      { name: "Tlayuda", description: "Crispy tortilla, beans, quesillo, avocado", priceCents: 1250, dietaryTags: ["vegetarian"], portions: 9 },
+      { name: "Mole Negro con Pollo", description: "Chicken in 28-ingredient black mole, rice, tortillas", priceCents: 1650, dietaryTags: [], portions: 6, photo: IMG("1565299585323-38d6b0865b47") },
+      { name: "Tamales de Rajas", description: "Poblano & cheese tamales in banana leaf (2 pc)", priceCents: 1050, dietaryTags: ["vegetarian"], portions: 12, photo: IMG("1551504734-5ee1c4a1479b") },
+      { name: "Tlayuda", description: "Crispy tortilla, beans, quesillo, avocado", priceCents: 1250, dietaryTags: ["vegetarian"], portions: 9, photo: IMG("1555939594-58d7cb561ad1") },
     ],
   },
 ];
@@ -85,7 +91,7 @@ async function main() {
           cuisineTag: k.cuisineTag,
           description: k.description,
           addressEncrypted: encryptAddress(k.address),
-          photos: [],
+          photos: k.photos,
           complianceAttestedAt: new Date(), // attested so it appears in search
         },
       });
@@ -113,6 +119,7 @@ async function main() {
             kitchenId: kitchen.id,
             name: d.name,
             description: d.description,
+            photo: d.photo,
             priceCents: d.priceCents,
             dietaryTags: d.dietaryTags,
           },

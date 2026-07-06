@@ -95,7 +95,14 @@ public class KitchensService {
                          SELECT SUM(mi."portionsRemaining") FROM "MenuItem" mi
                          JOIN "MenuDay" md ON md.id = mi."menuDayId"
                          WHERE md."kitchenId" = k.id AND md.status = 'published' AND md.date = CURRENT_DATE
-                       ), 0)::int AS portions_left
+                       ), 0)::int AS portions_left,
+                       COALESCE(k.photos[1], (
+                         SELECT d.photo FROM "MenuDay" md
+                         JOIN "MenuItem" mi ON mi."menuDayId" = md.id
+                         JOIN "Dish" d ON d.id = mi."dishId"
+                         WHERE md."kitchenId" = k.id AND d.photo IS NOT NULL
+                         ORDER BY md.date DESC LIMIT 1
+                       )) AS photo
                 FROM "Kitchen" k
                 WHERE k."complianceAttestedAt" IS NOT NULL
                   AND k.geo IS NOT NULL
@@ -115,7 +122,8 @@ public class KitchensService {
                         Math.round(rs.getDouble("meters") / METERS_PER_MILE * 10) / 10.0,
                         rs.getObject("ratingAvg", Double.class),
                         rs.getObject("hygiene", Integer.class),
-                        rs.getInt("portions_left")))
+                        rs.getInt("portions_left"),
+                        rs.getString("photo")))
                 .list();
     }
 

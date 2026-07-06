@@ -153,12 +153,33 @@ a {
 }
 
 .kitchen-photo {
-  height: 120px;
+  position: relative;
+  height: 150px;
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 44px;
   background: linear-gradient(135deg, #fdf0e3, #f6e7cd);
+  overflow: hidden;
+}
+
+.kitchen-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.flag-tag {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: rgba(255, 255, 255, 0.92);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
 }
 
 .badge {

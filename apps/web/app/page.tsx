@@ -13,6 +13,7 @@ interface KitchenResult {
   ratingAvg: number | null;
   hygieneScore: number | null;
   portionsLeftToday: number;
+  photo: string | null;
 }
 
 const CUISINES: { tag: string; label: string; icon: string }[] = [
@@ -141,7 +142,8 @@ export default function BuyerHome() {
                 className={`kitchen-card${soldOut ? " sold-out" : ""}`}
               >
                 <div className="kitchen-photo" aria-hidden>
-                  {CUISINE_ICONS[k.cuisineTag] ?? "🍽️"}
+                  {k.photo ? <img src={k.photo} alt="" loading="lazy" /> : CUISINE_ICONS[k.cuisineTag] ?? "🍽️"}
+                  <span className="flag-tag">{CUISINE_ICONS[k.cuisineTag] ?? "🍽️"}</span>
                 </div>
                 <div style={{ padding: "12px 16px 16px" }}>
                   <strong style={{ fontSize: 16 }}>{k.name}</strong>
