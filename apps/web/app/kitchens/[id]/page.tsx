@@ -8,6 +8,16 @@ import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { API } from "../../../lib/api";
 import { CUISINE_ICONS, CUISINE_LABELS } from "../../../lib/cuisines";
+import {
+  addLine,
+  Cart,
+  cartCount,
+  cartSubtotalCents,
+  getCart,
+  money,
+  setQty,
+  subscribeCart,
+} from "../../../lib/cart";
 
 interface KitchenProfile {
   id: string;
@@ -46,18 +56,23 @@ interface ReadyWindow {
 
 interface MenuDay {
   id: string;
+  date: string;
   status: string;
   readyWindows: ReadyWindow[];
   items: MenuItem[];
 }
-
-const money = (cents: number) => `$${(cents / 100).toFixed(2)}`;
 
 export default function KitchenProfilePage() {
   const { id } = useParams<{ id: string }>();
   const [profile, setProfile] = useState<KitchenProfile | null | "error">(null);
   const [menu, setMenu] = useState<MenuDay | null | undefined>(undefined);
   const [remaining, setRemaining] = useState<Record<string, number>>({});
+  const [cart, setCart] = useState<Cart | null>(null);
+
+  useEffect(() => {
+    setCart(getCart());
+    return subscribeCart(() => setCart(getCart()));
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -208,6 +223,7 @@ export default function KitchenProfilePage() {
             {menu.items.map((item) => {
               const left = remaining[item.id] ?? item.portionsRemaining;
               const soldOut = left <= 0;
+              const inCart = cart?.lines.find((l) => l.menuItemId === item.id)?.qty ?? 0;
               return (
                 <div key={item.id} className={`kitchen-card${soldOut ? " sold-out" : ""}`}>
                   <div className="kitchen-photo">
@@ -227,14 +243,61 @@ export default function KitchenProfilePage() {
                         </span>
                       ))}
                     </div>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        gap: 8,
+                      }}
+                    >
                       <strong>{money(item.dish.priceCents)}</strong>
                       {soldOut ? (
                         <span className="badge soldout">Sold out</span>
+                      ) : inCart > 0 ? (
+                        <span className="qty-stepper">
+                          <button aria-label="Remove one" onClick={() => setQty(item.id, inCart - 1)}>
+                            −
+                          </button>
+                          <span aria-live="polite">{inCart}</span>
+                          <button
+                            aria-label="Add one"
+                            disabled={inCart >= left}
+                            onClick={() => setQty(item.id, inCart + 1)}
+                          >
+                            +
+                          </button>
+                        </span>
                       ) : (
-                        <span className="badge portions">{left} left</span>
+                        <button
+                          className="btn-add"
+                          onClick={() =>
+                            addLine(
+                              {
+                                kitchenId: profile.id,
+                                kitchenName: profile.name,
+                                menuDayId: menu.id,
+                                menuDate: menu.date,
+                              },
+                              {
+                                menuItemId: item.id,
+                                dishName: item.dish.name,
+                                priceCents: item.dish.priceCents,
+                                photo: item.dish.photo,
+                                qty: 1,
+                              },
+                            )
+                          }
+                        >
+                          Add
+                        </button>
                       )}
                     </div>
+                    {!soldOut && (
+                      <div style={{ marginTop: 6, fontSize: 12, color: "var(--brand-muted)" }}>
+                        {left} left
+                      </div>
+                    )}
                   </div>
                 </div>
               );
@@ -263,6 +326,16 @@ export default function KitchenProfilePage() {
             </span>
           </Link>
         </>
+      )}
+
+      {cart && cart.kitchenId === profile.id && cartCount(cart) > 0 && (
+        <Link href="/checkout" className="cart-bar">
+          <span>
+            🛒 {cartCount(cart)} item{cartCount(cart) === 1 ? "" : "s"} ·{" "}
+            {money(cartSubtotalCents(cart))}
+          </span>
+          <span>View cart →</span>
+        </Link>
       )}
     </main>
   );

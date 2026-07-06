@@ -18,7 +18,8 @@ export default function LoginPage() {
     setBusy(true);
     try {
       await login(email, password);
-      router.push("/");
+      const next = new URLSearchParams(window.location.search).get("next");
+      router.push(next && next.startsWith("/") ? next : "/");
     } catch (err) {
       setError(err instanceof Error && err.message === "INVALID_CREDENTIALS"
         ? "Email or password is incorrect."
