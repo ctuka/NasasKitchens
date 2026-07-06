@@ -34,8 +34,10 @@ curl 'localhost:8080/kitchens/search?lat=37.788&lng=-122.4075'
 - [x] 1.3 Mutfak profili+geo  - [x] 1.4 Uygunluk beyani
 - [x] 2.1/2.2 Menu CRUD + hazir-zaman pencereleri (Java)
 - [x] 2.3 Atomik envanter + canli SSE + manuel duzeltme
-- [~] 3.3 Siparis cekirdegi (Stripe: Story 3.4)
+- [x] 3.3 Siparis cekirdegi + web cart/checkout
+- [~] 3.4 Stripe (backend hazir: PaymentIntent + imzali webhook + terkedilen-siparis
+      supurucusu; PAYMENTS_PROVIDER=mock varsayilan — web PaymentSheet henuz yok)
 - [x] 4.1 Satici siparis yasam dongusu
 - [~] 4.2 Teslimat (mock provider; DoorDash/Grubhub kimlik bilgisi bekliyor)
 - [x] 5.1 MCP sunucusu        - [x] 5.2 Konusma agenti
-- [ ] 3.4 Stripe, 4.4 bildirimler, 6.x guven/topluluk, 7.x
+- [ ] 4.4 bildirimler, 6.x guven/topluluk, 7.x

@@ -4,6 +4,7 @@ import com.nanaskitchens.api.delivery.DeliveryService;
 import com.nanaskitchens.api.inventory.InventoryService;
 import com.nanaskitchens.api.inventory.PortionsChanged;
 import com.nanaskitchens.api.kitchens.AddressCrypto;
+import com.nanaskitchens.api.payments.PaymentProvider;
 import com.nanaskitchens.api.kitchens.dto.MenuDayResponse;
 import com.nanaskitchens.api.orders.dto.CreateOrderRequest;
 import com.nanaskitchens.api.orders.dto.OrderDetailResponse;
@@ -48,6 +49,7 @@ public class OrdersService {
     private final JsonMapper jsonMapper;
     private final org.springframework.context.ApplicationEventPublisher eventPublisher;
     private final DeliveryService deliveryService;
+    private final PaymentProvider payments;
 
     public OrdersService(
             JdbcClient db,
@@ -55,13 +57,15 @@ public class OrdersService {
             AddressCrypto addressCrypto,
             JsonMapper jsonMapper,
             org.springframework.context.ApplicationEventPublisher eventPublisher,
-            DeliveryService deliveryService) {
+            DeliveryService deliveryService,
+            PaymentProvider payments) {
         this.db = db;
         this.inventory = inventory;
         this.addressCrypto = addressCrypto;
         this.jsonMapper = jsonMapper;
         this.eventPublisher = eventPublisher;
         this.deliveryService = deliveryService;
+        this.payments = payments;
     }
 
     /**
@@ -125,29 +129,37 @@ public class OrdersService {
             return Map.of("confirmed", false, "summary", summary); // FR15: summary first, no side effects
         }
 
-        // Atomic: decrement + order in one transaction (Story 2.3 / architecture Workflow 1)
+        // Atomic: decrement + order in one transaction (Story 2.3 / architecture Workflow 1).
+        // The PaymentIntent is created inside the same transaction on purpose: a provider
+        // failure rolls everything back, which IS the compensating restore of Story 3.3 AC3.
         String orderId = UUID.randomUUID().toString();
         for (CreateOrderRequest.Item item : input.items()) {
             inventory.decrement(item.menuItemId(), item.qty());
         }
+        String idempotencyKey = UUID.randomUUID().toString(); // doubles as the Stripe idempotency key
+        PaymentProvider.Intent intent = payments.createIntent(orderId, totalCents, idempotencyKey);
+        // mock settles instantly → confirmed (pre-3.4 behaviour); stripe stays pending until
+        // the webhook lands (detail() already withholds the pickup address while pending).
+        boolean paid = "succeeded".equals(intent.status());
         db.sql("""
                 INSERT INTO "Order"
                   (id, "buyerId", "kitchenId", "menuDayId", status, "readySlot", fulfillment,
-                   "totalCents", "commissionCents", "idempotencyKey")
+                   "totalCents", "commissionCents", "paymentIntentId", "idempotencyKey")
                 VALUES
-                  (:id, :buyerId, :kitchenId, :menuDayId, 'confirmed', :readySlot, :fulfillment,
-                   :totalCents, :commissionCents, :idempotencyKey)
+                  (:id, :buyerId, :kitchenId, :menuDayId, :status, :readySlot, :fulfillment,
+                   :totalCents, :commissionCents, :paymentIntentId, :idempotencyKey)
                 """)
                 .param("id", orderId)
                 .param("buyerId", buyerId)
                 .param("kitchenId", input.kitchenId())
                 .param("menuDayId", input.menuDayId())
+                .param("status", paid ? "confirmed" : "pending")
                 .param("readySlot", parseReadySlot(input.readySlot()))
                 .param("fulfillment", input.fulfillment())
                 .param("totalCents", totalCents)
                 .param("commissionCents", commissionCents)
-                // becomes the Stripe draft id in Story 3.4
-                .param("idempotencyKey", UUID.randomUUID().toString())
+                .param("paymentIntentId", intent.id())
+                .param("idempotencyKey", idempotencyKey)
                 .update();
         for (CreateOrderRequest.Item item : input.items()) {
             db.sql("""
@@ -174,7 +186,21 @@ public class OrdersService {
         // Delivered AFTER_COMMIT: SSE subscribers see the new counts only once they're durable.
         eventPublisher.publishEvent(
                 new PortionsChanged(input.items().stream().map(CreateOrderRequest.Item::menuItemId).toList()));
-        return Map.of("confirmed", true, "order", detail(buyerId, orderId));
+        if (paid) {
+            return Map.of("confirmed", true, "order", detail(buyerId, orderId));
+        }
+        // Client must confirm the PaymentIntent (Stripe Elements/PaymentSheet); the
+        // payment_intent.succeeded webhook then flips the order to confirmed.
+        Map<String, Object> payment = new LinkedHashMap<>();
+        payment.put("provider", payments.name());
+        payment.put("clientSecret", intent.clientSecret());
+        payment.put("publishableKey", payments.publishableKey());
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("confirmed", false);
+        result.put("requiresPayment", true);
+        result.put("orderId", orderId);
+        result.put("payment", payment);
+        return result;
     }
 
     /** FR10: step-by-step address disclosure — street address only on a confirmed pickup order. */
@@ -372,6 +398,14 @@ public class OrdersService {
         }
         if (FINAL_STATUSES.contains((String) order.get("status"))) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "NOT_CANCELLABLE");
+        }
+        // Pending = the buyer may still have an open payment sheet: cancel the intent first
+        // so the money can't be captured after we release the portions. If the intent is
+        // already terminal (paid a moment ago), let the succeeded webhook settle it instead.
+        if ("pending".equals(order.get("status"))
+                && order.get("paymentIntentId") != null
+                && !payments.tryCancelIntent((String) order.get("paymentIntentId"))) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "PAYMENT_SETTLING");
         }
         record ItemQty(String menuItemId, int qty) {
         }

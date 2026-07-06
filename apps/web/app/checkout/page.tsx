@@ -128,6 +128,12 @@ export default function CheckoutPage() {
         setError(body.message ?? "Could not place the order.");
         return;
       }
+      if (body.requiresPayment) {
+        // Server runs the real Stripe provider (Story 3.4) but the web payment sheet
+        // isn't built yet; the unpaid pending order auto-releases server-side.
+        setError("Card payment is required by this server, but the web payment form isn't available yet.");
+        return;
+      }
       clearCart();
       router.push(`/orders/${body.order.id}`);
     } catch {

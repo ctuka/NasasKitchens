@@ -44,3 +44,13 @@ app:
     # (architecture.md risk mitigation: same provider interface, pickup-only launch flag).
     provider: ${DELIVERY_PROVIDER:mock}
     webhook-secret: ${DELIVERY_WEBHOOK_SECRET:dev-delivery-webhook-secret}
+  payments:
+    # mock | stripe (Story 3.4) — mock settles instantly so the demo needs no Stripe keys;
+    # stripe creates real PaymentIntents and settles orders via /webhooks/stripe.
+    provider: ${PAYMENTS_PROVIDER:mock}
+    # Abandoned pending orders (payment sheet never completed) are released after ~30 min.
+    pending-sweep-delay-ms: 300000
+    stripe:
+      secret-key: ${STRIPE_SECRET_KEY:}
+      publishable-key: ${STRIPE_PUBLISHABLE_KEY:}
+      webhook-secret: ${STRIPE_WEBHOOK_SECRET:}

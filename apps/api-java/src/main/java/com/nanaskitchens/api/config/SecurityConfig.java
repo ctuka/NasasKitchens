@@ -45,8 +45,10 @@ public class SecurityConfig {
                                 "/kitchens/search", "/kitchens/*", "/kitchens/*/menu",
                                 "/kitchens/*/portions/stream")
                         .permitAll()
-                        // delivery partner callbacks authenticate via HMAC signature, not JWT
-                        .requestMatchers(org.springframework.http.HttpMethod.POST, "/webhooks/delivery/*")
+                        // partner callbacks authenticate via their own signatures, not JWT
+                        // (delivery: HMAC; stripe: Stripe-Signature header)
+                        .requestMatchers(org.springframework.http.HttpMethod.POST,
+                                "/webhooks/delivery/*", "/webhooks/stripe")
                         .permitAll()
                         .anyRequest()
                         .authenticated())
