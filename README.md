@@ -35,8 +35,9 @@ curl 'localhost:8080/kitchens/search?lat=37.788&lng=-122.4075'
 - [x] 2.1/2.2 Menu CRUD + hazir-zaman pencereleri (Java)
 - [x] 2.3 Atomik envanter + canli SSE + manuel duzeltme
 - [x] 3.3 Siparis cekirdegi + web cart/checkout
-- [~] 3.4 Stripe (backend hazir: PaymentIntent + imzali webhook + terkedilen-siparis
-      supurucusu; PAYMENTS_PROVIDER=mock varsayilan — web PaymentSheet henuz yok)
+- [~] 3.4 Stripe (PaymentIntent + imzali webhook + terkedilen-siparis supurucusu +
+      web PaymentElement; PAYMENTS_PROVIDER=mock varsayilan — gercek test anahtariyla
+      denenmedi, Connect payout icin satici onboarding bekliyor)
 - [x] 4.1 Satici siparis yasam dongusu
 - [~] 4.2 Teslimat (mock provider; DoorDash/Grubhub kimlik bilgisi bekliyor)
 - [x] 5.1 MCP sunucusu        - [x] 5.2 Konusma agenti

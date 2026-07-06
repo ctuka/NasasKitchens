@@ -1,9 +1,12 @@
 "use client";
 
-/** Cart & Checkout (front-end-spec.md, FR7/FR8/FR10/FR21, Story 3.3). Ready-time slots come
- * from the kitchen's published windows; the priced summary and the placement both go through
- * POST /orders (confirm=false then true — the same FR15 guardrail the agent uses). Card payment
- * (Stripe PaymentSheet) is Story 3.4; until then "Place order" confirms directly. */
+/** Cart & Checkout (front-end-spec.md, FR7/FR8/FR10/FR21, Story 3.3 + 3.4). Ready-time slots
+ * come from the kitchen's published windows; the priced summary and the placement both go
+ * through POST /orders (confirm=false then true — the same FR15 guardrail the agent uses).
+ * When the server runs the real Stripe provider it answers requiresPayment + clientSecret,
+ * and the PaymentElement step below settles it; the mock provider confirms instantly. */
+import { Elements, PaymentElement, useElements, useStripe } from "@stripe/react-stripe-js";
+import { loadStripe } from "@stripe/stripe-js";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
@@ -24,6 +27,12 @@ interface MenuDay {
 
 interface PricedSummary {
   totalCents: number;
+}
+
+interface PendingPayment {
+  orderId: string;
+  clientSecret: string;
+  publishableKey: string;
 }
 
 type Fulfillment = "pickup" | "delivery";
@@ -52,6 +61,7 @@ export default function CheckoutPage() {
   const [slot, setSlot] = useState<string | null>(null);
   const [fulfillment, setFulfillment] = useState<Fulfillment>("pickup");
   const [summary, setSummary] = useState<PricedSummary | null>(null);
+  const [payment, setPayment] = useState<PendingPayment | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [conflict, setConflict] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -129,9 +139,13 @@ export default function CheckoutPage() {
         return;
       }
       if (body.requiresPayment) {
-        // Server runs the real Stripe provider (Story 3.4) but the web payment sheet
-        // isn't built yet; the unpaid pending order auto-releases server-side.
-        setError("Card payment is required by this server, but the web payment form isn't available yet.");
+        // Story 3.4: the pending order holds the portions; the PaymentElement step below
+        // settles it (webhook flips it to confirmed). Abandonment auto-releases server-side.
+        setPayment({
+          orderId: body.orderId,
+          clientSecret: body.payment.clientSecret,
+          publishableKey: body.payment.publishableKey,
+        });
         return;
       }
       clearCart();
@@ -277,7 +291,9 @@ export default function CheckoutPage() {
         </p>
       )}
 
-      {!summary ? (
+      {payment ? (
+        <PaymentStep payment={payment} totalCents={summary?.totalCents ?? subtotal} />
+      ) : !summary ? (
         <>
           <div style={{ display: "flex", justifyContent: "space-between", margin: "16px 0" }}>
             <span style={{ color: "var(--brand-muted)" }}>Subtotal</span>
@@ -305,7 +321,7 @@ export default function CheckoutPage() {
             {fulfillment === "pickup"
               ? "The kitchen's address appears on your order once it's placed."
               : "You'll get a courier tracking link when the kitchen marks it ready."}{" "}
-            Card payment arrives in a later update — placing now reserves your portions.
+            Placing reserves your portions; if card payment is required you&rsquo;ll enter it next.
           </p>
           <button className="btn-primary" disabled={busy} onClick={place}>
             {busy ? "Placing…" : "Place order"}
@@ -328,5 +344,73 @@ export default function CheckoutPage() {
         </div>
       )}
     </main>
+  );
+}
+
+/** Story 3.4 — Stripe PaymentElement over the clientSecret the API returned. The pending
+ * order already holds the portions; paying settles it via the payment_intent.succeeded
+ * webhook. NFR6: the card form is Stripe's — no PAN ever reaches our servers. */
+function PaymentStep({ payment, totalCents }: { payment: PendingPayment; totalCents: number }) {
+  const stripePromise = useMemo(() => loadStripe(payment.publishableKey), [payment.publishableKey]);
+  return (
+    <div className="card" style={{ marginTop: 16, borderColor: "var(--brand-orange)" }}>
+      <h2 style={{ fontSize: 17, color: "var(--brand-green)", marginTop: 0 }}>Payment</h2>
+      <Elements
+        stripe={stripePromise}
+        options={{
+          clientSecret: payment.clientSecret,
+          appearance: { variables: { colorPrimary: "#e8720c" } },
+        }}
+      >
+        <PaymentForm orderId={payment.orderId} totalCents={totalCents} />
+      </Elements>
+    </div>
+  );
+}
+
+function PaymentForm({ orderId, totalCents }: { orderId: string; totalCents: number }) {
+  const stripe = useStripe();
+  const elements = useElements();
+  const router = useRouter();
+  const [payError, setPayError] = useState<string | null>(null);
+  const [paying, setPaying] = useState(false);
+
+  async function pay() {
+    if (!stripe || !elements) return;
+    setPaying(true);
+    setPayError(null);
+    // Cards settle inline; redirect-based methods return here via return_url. Either way
+    // the order page shows "payment processing" until the webhook confirms it.
+    const { error } = await stripe.confirmPayment({
+      elements,
+      confirmParams: { return_url: `${window.location.origin}/orders/${orderId}` },
+      redirect: "if_required",
+    });
+    if (error) {
+      setPayError(error.message ?? "Payment failed — try another payment method.");
+      setPaying(false);
+      return;
+    }
+    clearCart();
+    router.push(`/orders/${orderId}`);
+  }
+
+  return (
+    <>
+      {payError && (
+        <div className="form-error" role="alert">
+          {payError}
+        </div>
+      )}
+      <PaymentElement />
+      <button
+        className="btn-primary"
+        style={{ marginTop: 16 }}
+        disabled={!stripe || !elements || paying}
+        onClick={pay}
+      >
+        {paying ? "Paying…" : `Pay ${money(totalCents)}`}
+      </button>
+    </>
   );
 }

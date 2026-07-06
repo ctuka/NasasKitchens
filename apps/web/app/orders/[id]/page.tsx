@@ -35,6 +35,7 @@ interface OrderDetail {
 }
 
 const STATUS_LABEL: Record<string, string> = {
+  pending: "Payment processing…",
   confirmed: "Confirmed — waiting for the kitchen to accept",
   accepted: "Accepted by the kitchen",
   preparing: "Being prepared",
@@ -65,6 +66,16 @@ export default function OrderPage() {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+
+  // Story 3.4: a just-paid order stays 'pending' until the payment webhook lands — refresh
+  // until it settles (the sweeper cancels truly abandoned ones server-side).
+  useEffect(() => {
+    if (order !== null && order !== "error" && order.status === "pending") {
+      const timer = setTimeout(load, 3000);
+      return () => clearTimeout(timer);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [order]);
 
   async function cancel() {
     setCancelling(true);
@@ -100,8 +111,10 @@ export default function OrderPage() {
   return (
     <main style={{ maxWidth: 640, margin: "0 auto", padding: "32px 24px" }}>
       <div className="card" style={{ textAlign: "center", padding: "28px 24px", marginBottom: 16 }}>
-        <p style={{ fontSize: 40, margin: 0 }}>🎉</p>
-        <h1 style={{ margin: "8px 0 4px", fontSize: 22, color: "var(--brand-green)" }}>Order placed!</h1>
+        <p style={{ fontSize: 40, margin: 0 }}>{order.status === "pending" ? "⏳" : "🎉"}</p>
+        <h1 style={{ margin: "8px 0 4px", fontSize: 22, color: "var(--brand-green)" }}>
+          {order.status === "pending" ? "Finishing your payment…" : "Order placed!"}
+        </h1>
         <p style={{ color: "var(--brand-muted)", margin: 0 }}>{order.kitchenName}</p>
       </div>
 
