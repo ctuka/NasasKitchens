@@ -41,4 +41,6 @@ curl 'localhost:8080/kitchens/search?lat=37.788&lng=-122.4075'
 - [x] 4.1 Satici siparis yasam dongusu
 - [~] 4.2 Teslimat (mock provider; DoorDash/Grubhub kimlik bilgisi bekliyor)
 - [x] 5.1 MCP sunucusu        - [x] 5.2 Konusma agenti
-- [ ] 4.4 bildirimler, 6.x guven/topluluk, 7.x
+- [~] 4.4 Bildirimler (uygulama ici inbox + web zili; push/email kanali FCM/SES
+      kimlik bilgisi bekliyor, NOTIFICATIONS_CHANNEL=log)
+- [ ] 6.x guven/topluluk, 7.x mufettis portali, satici web portali

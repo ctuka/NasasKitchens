@@ -28,16 +28,19 @@ public class DeliveryService {
     private final DeliveryProvider provider;
     private final JsonMapper jsonMapper;
     private final byte[] webhookSecret;
+    private final com.nanaskitchens.api.notifications.NotificationsService notifications;
 
     public DeliveryService(
             JdbcClient db,
             DeliveryProvider provider,
             JsonMapper jsonMapper,
-            @Value("${app.delivery.webhook-secret}") String webhookSecret) {
+            @Value("${app.delivery.webhook-secret}") String webhookSecret,
+            com.nanaskitchens.api.notifications.NotificationsService notifications) {
         this.db = db;
         this.provider = provider;
         this.jsonMapper = jsonMapper;
         this.webhookSecret = webhookSecret.getBytes(StandardCharsets.UTF_8);
+        this.notifications = notifications;
     }
 
     /** Called when the seller marks a delivery-fulfillment order Ready (AC2). */
@@ -77,16 +80,17 @@ public class DeliveryService {
         if (newRank == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "UNKNOWN_STATUS");
         }
-        record Job(String id, String orderId, String status) {
+        record Job(String id, String orderId, String status, String trackingUrl) {
         }
         Job job = db.sql("""
-                SELECT id, "orderId", status FROM "DeliveryJob"
+                SELECT id, "orderId", status, "trackingUrl" FROM "DeliveryJob"
                 WHERE "externalId" = :externalId AND provider = :provider
                 FOR UPDATE
                 """)
                 .param("externalId", event.externalId())
                 .param("provider", providerName)
-                .query((rs, n) -> new Job(rs.getString("id"), rs.getString("orderId"), rs.getString("status")))
+                .query((rs, n) -> new Job(rs.getString("id"), rs.getString("orderId"),
+                        rs.getString("status"), rs.getString("trackingUrl")))
                 .optional()
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "DELIVERY_NOT_FOUND"));
 
@@ -105,7 +109,37 @@ public class DeliveryService {
         }
         audit("webhook:" + providerName, job.orderId(), "delivery_status",
                 Map.of("eventId", event.eventId(), "from", job.status(), "to", event.status()));
+        notifyBuyer(job.orderId(), event.status(), job.trackingUrl());
         return Map.of("applied", true, "status", event.status());
+    }
+
+    /** FR22 / Story 4.2 AC2 — courier progress goes to the buyer with the tracking link. */
+    private void notifyBuyer(String orderId, String status, String trackingUrl) {
+        String title = switch (status) {
+            case "courier_assigned" -> "Courier assigned";
+            case "picked_up" -> "Order picked up";
+            case "delivered" -> "Order delivered";
+            case "cancelled" -> "Delivery cancelled";
+            default -> null;
+        };
+        if (title == null) {
+            return;
+        }
+        record BuyerRow(String buyerId, String kitchenName) {
+        }
+        BuyerRow buyer = db.sql("""
+                SELECT o."buyerId", k.name FROM "Order" o
+                JOIN "Kitchen" k ON k.id = o."kitchenId"
+                WHERE o.id = :id
+                """)
+                .param("id", orderId)
+                .query((rs, n) -> new BuyerRow(rs.getString("buyerId"), rs.getString("name")))
+                .single();
+        Map<String, Object> data = trackingUrl == null
+                ? Map.of("orderId", orderId)
+                : Map.of("orderId", orderId, "trackingUrl", trackingUrl);
+        notifications.notify(buyer.buyerId(), "delivery_" + status, title,
+                "Your delivery from " + buyer.kitchenName() + ".", data);
     }
 
     public Map<String, Object> findByOrderId(String orderId) {

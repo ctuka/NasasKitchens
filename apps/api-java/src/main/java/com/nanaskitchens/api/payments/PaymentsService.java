@@ -2,6 +2,7 @@ package com.nanaskitchens.api.payments;
 
 import com.nanaskitchens.api.inventory.InventoryService;
 import com.nanaskitchens.api.inventory.PortionsChanged;
+import com.nanaskitchens.api.notifications.NotificationsService;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -23,19 +24,22 @@ public class PaymentsService {
     private final InventoryService inventory;
     private final ApplicationEventPublisher eventPublisher;
     private final JsonMapper jsonMapper;
+    private final NotificationsService notifications;
 
     public PaymentsService(
             JdbcClient db,
             InventoryService inventory,
             ApplicationEventPublisher eventPublisher,
-            JsonMapper jsonMapper) {
+            JsonMapper jsonMapper,
+            NotificationsService notifications) {
         this.db = db;
         this.inventory = inventory;
         this.eventPublisher = eventPublisher;
         this.jsonMapper = jsonMapper;
+        this.notifications = notifications;
     }
 
-    private record OrderRow(String id, String status) {
+    private record OrderRow(String id, String status, String buyerId) {
     }
 
     /** payment_intent.succeeded → pending order becomes confirmed (enters the seller flow). */
@@ -55,6 +59,21 @@ public class PaymentsService {
         }
         db.sql("UPDATE \"Order\" SET status = 'confirmed' WHERE id = :id").param("id", order.id()).update();
         audit("webhook:payments", order.id(), "payment_succeeded", Map.of("paymentIntentId", paymentIntentId));
+        // FR22 — the seller only hears about a stripe-mode order once it's actually paid.
+        record SellerRow(String sellerId, String fulfillment, String readySlot) {
+        }
+        SellerRow seller = db.sql("""
+                SELECT k."sellerId", o.fulfillment, to_char(o."readySlot", 'HH24:MI') AS ready_slot
+                FROM "Order" o JOIN "Kitchen" k ON k.id = o."kitchenId"
+                WHERE o.id = :id
+                """)
+                .param("id", order.id())
+                .query((rs, n) -> new SellerRow(
+                        rs.getString("sellerId"), rs.getString("fulfillment"), rs.getString("ready_slot")))
+                .single();
+        notifications.notify(seller.sellerId(), "order_placed", "New order",
+                "A " + seller.fulfillment() + " order came in, ready time " + seller.readySlot() + ".",
+                Map.of("orderId", order.id()));
         return Map.of("applied", true, "orderId", order.id(), "status", "confirmed");
     }
 
@@ -81,14 +100,19 @@ public class PaymentsService {
         db.sql("UPDATE \"Order\" SET status = 'cancelled' WHERE id = :id").param("id", order.id()).update();
         audit("webhook:payments", order.id(), "payment_failed",
                 Map.of("paymentIntentId", paymentIntentId, "reason", reason));
+        // FR22 — redirect-based payers may never come back to the order page; tell them.
+        notifications.notify(order.buyerId(), "payment_failed", "Payment didn't complete",
+                "Your order was released because the payment didn't go through — you were not charged.",
+                Map.of("orderId", order.id()));
         eventPublisher.publishEvent(new PortionsChanged(items.stream().map(ItemQty::menuItemId).toList()));
         return Map.of("applied", true, "orderId", order.id(), "status", "cancelled");
     }
 
     private OrderRow lockByIntent(String paymentIntentId) {
-        return db.sql("SELECT id, status FROM \"Order\" WHERE \"paymentIntentId\" = :pi FOR UPDATE")
+        return db.sql("SELECT id, status, \"buyerId\" FROM \"Order\" WHERE \"paymentIntentId\" = :pi FOR UPDATE")
                 .param("pi", paymentIntentId)
-                .query((rs, n) -> new OrderRow(rs.getString("id"), rs.getString("status")))
+                .query((rs, n) -> new OrderRow(
+                        rs.getString("id"), rs.getString("status"), rs.getString("buyerId")))
                 .optional()
                 .orElse(null);
     }

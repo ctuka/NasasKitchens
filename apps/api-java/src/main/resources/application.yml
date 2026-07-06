@@ -54,3 +54,7 @@ app:
       secret-key: ${STRIPE_SECRET_KEY:}
       publishable-key: ${STRIPE_PUBLISHABLE_KEY:}
       webhook-secret: ${STRIPE_WEBHOOK_SECRET:}
+  notifications:
+    # log | fcm | ses (Story 4.4) — the in-app inbox (Notification table + /notifications)
+    # always works; this only picks the external fan-out, log until FCM/SES creds exist.
+    channel: ${NOTIFICATIONS_CHANNEL:log}

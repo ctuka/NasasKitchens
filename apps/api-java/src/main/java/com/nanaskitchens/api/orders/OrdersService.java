@@ -4,6 +4,7 @@ import com.nanaskitchens.api.delivery.DeliveryService;
 import com.nanaskitchens.api.inventory.InventoryService;
 import com.nanaskitchens.api.inventory.PortionsChanged;
 import com.nanaskitchens.api.kitchens.AddressCrypto;
+import com.nanaskitchens.api.notifications.NotificationsService;
 import com.nanaskitchens.api.payments.PaymentProvider;
 import com.nanaskitchens.api.kitchens.dto.MenuDayResponse;
 import com.nanaskitchens.api.orders.dto.CreateOrderRequest;
@@ -50,6 +51,7 @@ public class OrdersService {
     private final org.springframework.context.ApplicationEventPublisher eventPublisher;
     private final DeliveryService deliveryService;
     private final PaymentProvider payments;
+    private final NotificationsService notifications;
 
     public OrdersService(
             JdbcClient db,
@@ -58,7 +60,8 @@ public class OrdersService {
             JsonMapper jsonMapper,
             org.springframework.context.ApplicationEventPublisher eventPublisher,
             DeliveryService deliveryService,
-            PaymentProvider payments) {
+            PaymentProvider payments,
+            NotificationsService notifications) {
         this.db = db;
         this.inventory = inventory;
         this.addressCrypto = addressCrypto;
@@ -66,6 +69,7 @@ public class OrdersService {
         this.eventPublisher = eventPublisher;
         this.deliveryService = deliveryService;
         this.payments = payments;
+        this.notifications = notifications;
     }
 
     /**
@@ -187,6 +191,7 @@ public class OrdersService {
         eventPublisher.publishEvent(
                 new PortionsChanged(input.items().stream().map(CreateOrderRequest.Item::menuItemId).toList()));
         if (paid) {
+            notifySellerNewOrder(orderId, input.kitchenId()); // FR22 — pending orders wait for markPaid
             return Map.of("confirmed", true, "order", detail(buyerId, orderId));
         }
         // Client must confirm the PaymentIntent (Stripe Elements/PaymentSheet); the
@@ -201,6 +206,25 @@ public class OrdersService {
         result.put("orderId", orderId);
         result.put("payment", payment);
         return result;
+    }
+
+    /** FR22 — the seller learns about a (paid) order the moment it lands. */
+    public void notifySellerNewOrder(String orderId, String kitchenId) {
+        record Row(String sellerId, String fulfillment, String readySlot) {
+        }
+        Row row = db.sql("""
+                SELECT k."sellerId", o.fulfillment, to_char(o."readySlot", 'HH24:MI') AS ready_slot
+                FROM "Order" o JOIN "Kitchen" k ON k.id = o."kitchenId"
+                WHERE o.id = :orderId AND k.id = :kitchenId
+                """)
+                .param("orderId", orderId)
+                .param("kitchenId", kitchenId)
+                .query((rs, n) -> new Row(
+                        rs.getString("sellerId"), rs.getString("fulfillment"), rs.getString("ready_slot")))
+                .single();
+        notifications.notify(row.sellerId(), "order_placed", "New order",
+                "A " + row.fulfillment() + " order came in, ready time " + row.readySlot() + ".",
+                Map.of("orderId", orderId));
     }
 
     /** FR10: step-by-step address disclosure — street address only on a confirmed pickup order. */
@@ -282,17 +306,21 @@ public class OrdersService {
      */
     @Transactional
     public Map<String, Object> transition(String sellerId, String orderId, String target) {
-        record Row(String status, String fulfillment, String kitchenSellerId) {
+        record Row(String status, String fulfillment, String kitchenSellerId, String buyerId,
+                String kitchenName) {
         }
         Row order = db.sql("""
-                SELECT o.status, o.fulfillment, k."sellerId" AS kitchen_seller_id
+                SELECT o.status, o.fulfillment, k."sellerId" AS kitchen_seller_id,
+                       o."buyerId", k.name AS kitchen_name
                 FROM "Order" o JOIN "Kitchen" k ON k.id = o."kitchenId"
                 WHERE o.id = :id
                 FOR UPDATE OF o
                 """)
                 .param("id", orderId)
                 .query((rs, n) -> new Row(
-                        rs.getString("status"), rs.getString("fulfillment"), rs.getString("kitchen_seller_id")))
+                        rs.getString("status"), rs.getString("fulfillment"),
+                        rs.getString("kitchen_seller_id"), rs.getString("buyerId"),
+                        rs.getString("kitchen_name")))
                 .optional()
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
         if (!sellerId.equals(order.kitchenSellerId())) {
@@ -325,6 +353,28 @@ public class OrdersService {
         Map<String, Object> deliveryJob = null;
         if ("ready".equals(target) && "delivery".equals(order.fulfillment())) {
             deliveryJob = deliveryService.createForOrder(orderId, sellerId);
+        }
+
+        // FR22 — the buyer follows every seller-driven status change.
+        String trackingUrl = deliveryJob == null ? null : (String) deliveryJob.get("trackingUrl");
+        Map<String, Object> data = trackingUrl == null
+                ? Map.of("orderId", orderId)
+                : Map.of("orderId", orderId, "trackingUrl", trackingUrl);
+        switch (target) {
+            case "accepted" -> notifications.notify(order.buyerId(), "order_accepted", "Order accepted",
+                    order.kitchenName() + " accepted your order.", data);
+            case "declined" -> notifications.notify(order.buyerId(), "order_declined", "Order declined",
+                    order.kitchenName() + " couldn't take your order — your portions were released.", data);
+            case "preparing" -> notifications.notify(order.buyerId(), "order_preparing", "In the kitchen",
+                    order.kitchenName() + " is preparing your food.", data);
+            case "ready" -> notifications.notify(order.buyerId(), "order_ready",
+                    "delivery".equals(order.fulfillment())
+                            ? "Ready — courier on the way" : "Ready for pickup",
+                    "Your order at " + order.kitchenName() + " is ready.", data);
+            case "completed" -> notifications.notify(order.buyerId(), "order_completed", "Order completed",
+                    "Enjoy your meal from " + order.kitchenName() + "!", data);
+            default -> {
+            }
         }
 
         db.sql("""
@@ -418,6 +468,14 @@ public class OrdersService {
         }
         db.sql("UPDATE \"Order\" SET status = 'cancelled' WHERE id = :id").param("id", orderId).update();
         order.put("status", "cancelled");
+        // FR22 — the seller learns the slot freed up.
+        String sellerId = db.sql("SELECT \"sellerId\" FROM \"Kitchen\" WHERE id = :id")
+                .param("id", order.get("kitchenId"))
+                .query(String.class)
+                .single();
+        notifications.notify(sellerId, "order_cancelled", "Order cancelled",
+                "The buyer cancelled an order — its portions are back in stock.",
+                Map.of("orderId", orderId));
         eventPublisher.publishEvent(new PortionsChanged(items.stream().map(ItemQty::menuItemId).toList()));
         return order;
     }

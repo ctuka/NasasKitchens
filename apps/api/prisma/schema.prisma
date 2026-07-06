@@ -54,6 +54,23 @@ model User {
   kitchen      Kitchen?
   orders       Order[]
   refreshTokens RefreshToken[]
+  notifications Notification[]
+}
+
+// Story 4.4 (FR22): in-app inbox is the source of truth; push/email channels fan out
+// from the same rows once FCM/SES credentials exist.
+model Notification {
+  id        String    @id @default(uuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id])
+  type      String
+  title     String
+  body      String
+  data      Json?
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, createdAt])
 }
 
 model RefreshToken {
