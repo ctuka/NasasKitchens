@@ -61,11 +61,13 @@ async function tryRefresh(): Promise<boolean> {
 }
 
 export async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  // FormData bodies must let the browser set the multipart boundary header itself.
+  const isForm = typeof FormData !== "undefined" && init.body instanceof FormData;
   const doFetch = () =>
     fetch(`${API}${path}`, {
       ...init,
       headers: {
-        "content-type": "application/json",
+        ...(isForm ? {} : { "content-type": "application/json" }),
         ...(init.headers ?? {}),
         ...(getAccessToken() ? { authorization: `Bearer ${getAccessToken()}` } : {}),
       },

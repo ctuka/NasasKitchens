@@ -2,3 +2,6 @@ target/
 *.class
 .idea/
 *.iml
+
+# LocalPhotoStorage dev uploads (Story 1.3) — runtime data, never committed
+uploads/

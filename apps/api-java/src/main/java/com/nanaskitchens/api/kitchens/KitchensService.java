@@ -6,6 +6,8 @@ import com.nanaskitchens.api.kitchens.dto.CreateKitchenRequest;
 import com.nanaskitchens.api.kitchens.dto.KitchenProfile;
 import com.nanaskitchens.api.kitchens.dto.KitchenSearchResult;
 import com.nanaskitchens.api.kitchens.dto.MenuDayResponse;
+import com.nanaskitchens.api.kitchens.dto.UpdateKitchenRequest;
+import com.nanaskitchens.api.storage.PhotoStorage;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
@@ -42,20 +44,30 @@ public class KitchensService {
     static final double SEARCH_RADIUS_MILES = 10;
     static final double METERS_PER_MILE = 1609.344;
 
+    /** Story 1.3 AC2 — ≤10 photos per kitchen, jpeg/png/webp, ≤5 MB each. */
+    static final int MAX_PHOTOS = 10;
+    static final long MAX_PHOTO_BYTES = 5 * 1024 * 1024;
+
     private final JdbcClient db;
     private final AddressCrypto addressCrypto;
     private final AuditLogRepository auditLogRepository;
     private final JsonMapper jsonMapper;
+    private final GeocodingService geocoding;
+    private final PhotoStorage photoStorage;
 
     public KitchensService(
             JdbcClient db,
             AddressCrypto addressCrypto,
             AuditLogRepository auditLogRepository,
-            JsonMapper jsonMapper) {
+            JsonMapper jsonMapper,
+            GeocodingService geocoding,
+            PhotoStorage photoStorage) {
         this.db = db;
         this.addressCrypto = addressCrypto;
         this.auditLogRepository = auditLogRepository;
         this.jsonMapper = jsonMapper;
+        this.geocoding = geocoding;
+        this.photoStorage = photoStorage;
     }
 
     @Transactional
@@ -63,6 +75,7 @@ public class KitchensService {
         if (!CUISINE_TAGS.contains(input.cuisineTag())) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "INVALID_CUISINE");
         }
+        double[] point = resolvePoint(input.address(), input.lat(), input.lng());
         String id = UUID.randomUUID().toString();
         db.sql("""
                 INSERT INTO "Kitchen" (id, "sellerId", name, "cuisineTag", description, photos, "addressEncrypted")
@@ -75,14 +88,100 @@ public class KitchensService {
                 .param("description", input.description())
                 .param("addressEncrypted", addressCrypto.encrypt(input.address())) // NFR5
                 .update();
+        updateGeo(id, point);
+        return publicProfile(id);
+    }
+
+    /** Story 1.3 — PATCH: sellers edit only their kitchen; a new address re-geocodes. */
+    @Transactional
+    public KitchenProfile update(String sellerId, String kitchenId, UpdateKitchenRequest input) {
+        String ownerId = db.sql("SELECT \"sellerId\" FROM \"Kitchen\" WHERE id = :id")
+                .param("id", kitchenId)
+                .query(String.class)
+                .optional()
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
+        if (!ownerId.equals(sellerId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        }
+        if (input.cuisineTag() != null && !CUISINE_TAGS.contains(input.cuisineTag())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "INVALID_CUISINE");
+        }
+
+        if (input.name() != null) {
+            db.sql("UPDATE \"Kitchen\" SET name = :v WHERE id = :id")
+                    .param("v", input.name()).param("id", kitchenId).update();
+        }
+        if (input.cuisineTag() != null) {
+            db.sql("UPDATE \"Kitchen\" SET \"cuisineTag\" = :v WHERE id = :id")
+                    .param("v", input.cuisineTag()).param("id", kitchenId).update();
+        }
+        if (input.description() != null) {
+            db.sql("UPDATE \"Kitchen\" SET description = :v WHERE id = :id")
+                    .param("v", input.description()).param("id", kitchenId).update();
+        }
+        if (input.photos() != null) {
+            db.sql("UPDATE \"Kitchen\" SET photos = :v WHERE id = :id")
+                    .param("v", input.photos().toArray(String[]::new)).param("id", kitchenId).update();
+        }
+        if (input.address() != null && !input.address().isBlank()) {
+            double[] point = resolvePoint(input.address(), input.lat(), input.lng());
+            db.sql("UPDATE \"Kitchen\" SET \"addressEncrypted\" = :v WHERE id = :id")
+                    .param("v", addressCrypto.encrypt(input.address())).param("id", kitchenId).update();
+            updateGeo(kitchenId, point);
+        }
+
+        AuditLog log = new AuditLog();
+        log.setActor(sellerId);
+        log.setEntity("Kitchen:" + kitchenId);
+        log.setAction("update_profile");
+        auditLogRepository.save(log);
+        return publicProfile(kitchenId);
+    }
+
+    /** Story 1.3 AC2 — upload one photo; append to the gallery via PhotoStorage. */
+    @Transactional
+    public KitchenProfile addPhoto(String sellerId, String kitchenId, byte[] bytes, String contentType) {
+        record Row(String sellerId, int photoCount) {
+        }
+        Row kitchen = db.sql("SELECT \"sellerId\", cardinality(photos) AS c FROM \"Kitchen\" WHERE id = :id")
+                .param("id", kitchenId)
+                .query((rs, n) -> new Row(rs.getString("sellerId"), rs.getInt("c")))
+                .optional()
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
+        if (!kitchen.sellerId().equals(sellerId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        }
+        if (kitchen.photoCount() >= MAX_PHOTOS) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "TOO_MANY_PHOTOS");
+        }
+        if (bytes.length == 0 || bytes.length > MAX_PHOTO_BYTES) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "PHOTO_TOO_LARGE");
+        }
+        String url = photoStorage.store(bytes, contentType);
+        db.sql("UPDATE \"Kitchen\" SET photos = array_append(photos, :url) WHERE id = :id")
+                .param("url", url)
+                .param("id", kitchenId)
+                .update();
+        return publicProfile(kitchenId);
+    }
+
+    /** AC1/AC4: geocode the address; manual lat/lng win when supplied, 400 when neither works. */
+    private double[] resolvePoint(String address, Double lat, Double lng) {
+        if (lat != null && lng != null) {
+            return new double[] {lat, lng};
+        }
+        return geocoding.geocode(address)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "GEOCODING_FAILED"));
+    }
+
+    private void updateGeo(String kitchenId, double[] point) {
         db.sql("""
                 UPDATE "Kitchen" SET geo = ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography WHERE id = :id
                 """)
-                .param("lng", input.lng())
-                .param("lat", input.lat())
-                .param("id", id)
+                .param("lng", point[1])
+                .param("lat", point[0])
+                .param("id", kitchenId)
                 .update();
-        return publicProfile(id);
     }
 
     /** FR5 + NFR2: PostGIS search within a 10-mile radius, ordered by distance. */
@@ -148,6 +247,16 @@ public class KitchensService {
                         localDateTime(rs, "complianceAttestedAt")))
                 .optional()
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
+    }
+
+    /** The seller's own kitchen (404 while onboarding isn't done). Same public shape — FR10 still holds. */
+    public KitchenProfile sellerKitchen(String sellerId) {
+        String kitchenId = db.sql("SELECT id FROM \"Kitchen\" WHERE \"sellerId\" = :sellerId")
+                .param("sellerId", sellerId)
+                .query(String.class)
+                .optional()
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "NO_KITCHEN"));
+        return publicProfile(kitchenId);
     }
 
     /** Story 5.1 / get_menu: the dated published menu of a kitchen, or null. */

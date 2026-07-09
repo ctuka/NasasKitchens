@@ -43,7 +43,8 @@ public class SecurityConfig {
                         // seller endpoints under /kitchens/{id}/... (dishes, menu-days) stay authenticated
                         .requestMatchers(org.springframework.http.HttpMethod.GET,
                                 "/kitchens/search", "/kitchens/*", "/kitchens/*/menu",
-                                "/kitchens/*/portions/stream")
+                                "/kitchens/*/portions/stream", "/kitchens/*/reviews", "/kitchens/*/polls",
+                                "/kitchens/*/health-reports", "/files/*")
                         .permitAll()
                         // partner callbacks authenticate via their own signatures, not JWT
                         // (delivery: HMAC; stripe: Stripe-Signature header)
