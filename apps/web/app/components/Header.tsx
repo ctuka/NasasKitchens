@@ -10,7 +10,7 @@ interface AppNotification {
   type: string;
   title: string;
   body: string;
-  data: { orderId?: string; trackingUrl?: string } | null;
+  data: { orderId?: string; trackingUrl?: string; kitchenId?: string } | null;
   readAt: string | null;
   createdAt: string;
 }
@@ -48,6 +48,11 @@ export default function Header() {
       <nav style={{ display: "flex", alignItems: "center", gap: 18, fontSize: 15 }}>
         <Link href="/">Home</Link>
         <Link href="/chat">Chat</Link>
+        {session?.role === "seller" && <Link href="/seller/orders">Orders</Link>}
+        {session?.role === "seller" && <Link href="/seller/menu">My Menu</Link>}
+        {session?.role === "seller" && <Link href="/seller/kitchen">My Kitchen</Link>}
+        {session?.role === "inspector" && <Link href="/inspector/visits">Visits</Link>}
+        {session?.role === "admin" && <Link href="/admin">Admin</Link>}
         {session ? (
           <>
             <NotificationBell session={session} />
@@ -104,8 +109,8 @@ export default function Header() {
 }
 
 /** Story 4.4 (FR22) — in-app notification inbox. Polls every 30 s; opening the panel
- * marks everything read. Buyer notifications deep-link to the order page (sellers have
- * no order screen on web yet, so theirs stay plain text). */
+ * marks everything read. Buyer notifications deep-link to the order page; seller
+ * order notifications deep-link to the Today Board (Story 4.1). */
 function NotificationBell({ session }: { session: Session }) {
   const [unread, setUnread] = useState(0);
   const [items, setItems] = useState<AppNotification[]>([]);
@@ -171,10 +176,26 @@ function NotificationBell({ session }: { session: Session }) {
                 <span style={{ fontSize: 11, color: "var(--brand-muted)" }}>{time}</span>
               </>
             );
-            return session.role === "buyer" && n.data?.orderId ? (
+            // Deep-link by role: buyers to the order/kitchen, sellers to the board or
+            // (for dish requests, which carry only kitchenId) their menu inbox.
+            const href =
+              session.role === "buyer"
+                ? n.data?.orderId
+                  ? `/orders/${n.data.orderId}`
+                  : n.data?.kitchenId
+                    ? `/kitchens/${n.data.kitchenId}`
+                    : null
+                : session.role === "seller"
+                  ? n.data?.orderId
+                    ? "/seller/orders"
+                    : n.data?.kitchenId
+                      ? "/seller/menu"
+                      : null
+                  : null;
+            return href ? (
               <Link
                 key={n.id}
-                href={`/orders/${n.data.orderId}`}
+                href={href}
                 className={`notif-item${n.readAt ? "" : " unread"}`}
                 onClick={() => setOpen(false)}
               >
