@@ -29,9 +29,15 @@ interface OrderDetail {
   fulfillment: string;
   totalCents: number;
   items: OrderItem[];
+  kitchenId: string;
   kitchenName: string;
   pickupAddress: string | null;
   deliveryJob: DeliveryJob | null;
+}
+
+interface Review {
+  rating: number;
+  comment: string | null;
 }
 
 const STATUS_LABEL: Record<string, string> = {
@@ -171,6 +177,8 @@ export default function OrderPage() {
         </div>
       </div>
 
+      {order.status === "completed" && <ReviewCard order={order} />}
+
       {!FINAL.has(order.status) && (
         <button
           onClick={cancel}
@@ -193,5 +201,111 @@ export default function OrderPage() {
         <Link href="/">Back to nearby kitchens</Link>
       </p>
     </main>
+  );
+}
+
+/** Story 6.1 (FR16) — rate the kitchen once the order is completed, once per order. */
+function ReviewCard({ order }: { order: OrderDetail }) {
+  const [existing, setExisting] = useState<Review | null | undefined>(undefined);
+  const [rating, setRating] = useState(0);
+  const [hover, setHover] = useState(0);
+  const [comment, setComment] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    apiFetch(`/orders/${order.id}/review`)
+      .then(async (res) => !cancelled && setExisting(res.ok ? await res.json() : null))
+      .catch(() => !cancelled && setExisting(null));
+    return () => {
+      cancelled = true;
+    };
+  }, [order.id]);
+
+  async function submit() {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await apiFetch(`/kitchens/${order.kitchenId}/reviews`, {
+        method: "POST",
+        body: JSON.stringify({ orderId: order.id, rating, comment: comment.trim() || undefined }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        setError(
+          body.message === "ALREADY_REVIEWED"
+            ? "You already reviewed this order."
+            : "Could not submit your review — try again.",
+        );
+        return;
+      }
+      setExisting(await res.json());
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (existing === undefined) return null; // still checking
+
+  if (existing) {
+    return (
+      <div className="card" style={{ marginBottom: 16, textAlign: "center" }}>
+        <div style={{ fontSize: 22, letterSpacing: 2 }} aria-label={`Your rating: ${existing.rating} of 5`}>
+          {"★".repeat(existing.rating)}
+          <span style={{ color: "var(--brand-border)" }}>{"★".repeat(5 - existing.rating)}</span>
+        </div>
+        {existing.comment && <p style={{ margin: "8px 0 0", fontStyle: "italic" }}>“{existing.comment}”</p>}
+        <p style={{ margin: "8px 0 0", color: "var(--brand-muted)", fontSize: 14 }}>
+          Thanks for reviewing {order.kitchenName}!
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="card" style={{ marginBottom: 16 }}>
+      <strong>How was {order.kitchenName}?</strong>
+      <div style={{ margin: "10px 0" }} role="radiogroup" aria-label="Rating">
+        {[1, 2, 3, 4, 5].map((n) => (
+          <button
+            key={n}
+            role="radio"
+            aria-checked={rating === n}
+            aria-label={`${n} star${n > 1 ? "s" : ""}`}
+            onClick={() => setRating(n)}
+            onMouseEnter={() => setHover(n)}
+            onMouseLeave={() => setHover(0)}
+            style={{
+              background: "transparent",
+              border: "none",
+              fontSize: 30,
+              cursor: "pointer",
+              padding: "0 2px",
+              color: n <= (hover || rating) ? "var(--brand-orange)" : "var(--brand-border)",
+            }}
+          >
+            ★
+          </button>
+        ))}
+      </div>
+      <textarea
+        className="field"
+        rows={3}
+        maxLength={1000}
+        placeholder="What did you love? (optional)"
+        value={comment}
+        onChange={(e) => setComment(e.target.value)}
+        style={{ resize: "vertical", fontFamily: "inherit" }}
+      />
+      {error && (
+        <div className="form-error" role="alert">
+          {error}
+        </div>
+      )}
+      <button className="btn-primary" disabled={busy || rating === 0} onClick={submit}>
+        {busy ? "Submitting…" : "Submit review"}
+      </button>
+    </div>
   );
 }
