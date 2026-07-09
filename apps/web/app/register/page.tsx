@@ -23,7 +23,7 @@ export default function RegisterPage() {
     setBusy(true);
     try {
       await register(email, password, role);
-      router.push("/");
+      router.push(role === "seller" ? "/seller/menu" : "/");
     } catch (err) {
       setError(err instanceof Error && err.message === "EMAIL_TAKEN"
         ? "An account with this email already exists."

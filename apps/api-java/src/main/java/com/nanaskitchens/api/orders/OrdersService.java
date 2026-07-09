@@ -409,12 +409,15 @@ public class OrdersService {
         }
         return db.sql("""
                 SELECT o.id, o.status, o."readySlot", o.fulfillment, o."totalCents", o."createdAt",
+                       dj.provider AS delivery_provider, dj.status AS delivery_status,
+                       dj."trackingUrl" AS delivery_tracking_url,
                        (SELECT string_agg(d.name || ' x' || oi.qty, ', ' ORDER BY d.name)
                         FROM "OrderItem" oi
                         JOIN "MenuItem" mi ON mi.id = oi."menuItemId"
                         JOIN "Dish" d ON d.id = mi."dishId"
                         WHERE oi."orderId" = o.id) AS items_summary
                 FROM "Order" o
+                LEFT JOIN "DeliveryJob" dj ON dj."orderId" = o.id
                 WHERE o."kitchenId" = :kitchenId
                   AND (:status::text IS NULL OR o.status::text = :status)
                 ORDER BY o."createdAt" DESC
@@ -431,6 +434,10 @@ public class OrdersService {
                     row.put("totalCents", rs.getInt("totalCents"));
                     row.put("createdAt", rs.getTimestamp("createdAt").toLocalDateTime());
                     row.put("itemsSummary", rs.getString("items_summary"));
+                    // Story 4.1 board — delivery-partner status chip (null for pickup / pre-ready)
+                    row.put("deliveryProvider", rs.getString("delivery_provider"));
+                    row.put("deliveryStatus", rs.getString("delivery_status"));
+                    row.put("deliveryTrackingUrl", rs.getString("delivery_tracking_url"));
                     return row;
                 })
                 .list();

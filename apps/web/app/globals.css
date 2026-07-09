@@ -279,6 +279,114 @@ a {
   background: var(--brand-orange-dark);
 }
 
+/* Seller Today Board (Story 4.1) */
+.board {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(230px, 1fr));
+  gap: 12px;
+  overflow-x: auto;
+  align-items: start;
+  padding-bottom: 8px;
+}
+
+.board-col {
+  background: #f3edd9;
+  border: 1px solid var(--brand-border);
+  border-radius: 14px;
+  padding: 10px;
+  min-height: 120px;
+}
+
+.board-col h3 {
+  margin: 2px 4px 10px;
+  font-size: 14px;
+  color: var(--brand-green);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.order-card {
+  background: #fff;
+  border: 1px solid var(--brand-border);
+  border-radius: 12px;
+  padding: 12px;
+  margin-bottom: 10px;
+  font-size: 13px;
+}
+
+.order-card:last-child {
+  margin-bottom: 0;
+}
+
+.order-card .slot {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.btn-accept {
+  flex: 1;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 8px;
+  background: var(--brand-green);
+  color: #fff;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.btn-decline {
+  flex: 1;
+  padding: 8px 10px;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  background: #fff;
+  color: #b91c1c;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.btn-decline.arm {
+  background: #b91c1c;
+  color: #fff;
+}
+
+.btn-advance {
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 8px;
+  background: var(--brand-orange);
+  color: #fff;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.btn-advance:hover {
+  background: var(--brand-orange-dark);
+}
+
+.btn-accept:disabled,
+.btn-decline:disabled,
+.btn-advance:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.badge.countdown {
+  background: #fdf0e3;
+  color: var(--brand-orange-dark);
+  font-variant-numeric: tabular-nums;
+}
+
+.badge.overdue {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
 /* Notification bell (Story 4.4) */
 .bell {
   position: relative;
