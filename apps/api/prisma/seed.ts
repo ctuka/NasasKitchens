@@ -65,13 +65,19 @@ const KITCHENS = [
 async function main() {
   const passwordHash = await argon2.hash("demo1234");
 
-  // Buyer
-  await prisma.user.upsert({
-    where: { email: "buyer@demo.com" },
-    update: {},
-    create: { email: "buyer@demo.com", passwordHash, role: "buyer" },
-  });
-  console.log("buyer@demo.com / demo1234");
+  // Buyer + platform-invited roles (Story 7.2: inspectors/admins have no open signup)
+  for (const u of [
+    { email: "buyer@demo.com", role: "buyer" },
+    { email: "inspector@demo.com", role: "inspector" },
+    { email: "admin@demo.com", role: "admin" },
+  ] as const) {
+    await prisma.user.upsert({
+      where: { email: u.email },
+      update: {},
+      create: { email: u.email, passwordHash, role: u.role },
+    });
+    console.log(`${u.email} / demo1234`);
+  }
 
   const today = new Date(new Date().toISOString().slice(0, 10)); // midnight UTC today
 

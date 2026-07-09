@@ -55,6 +55,11 @@ model User {
   orders       Order[]
   refreshTokens RefreshToken[]
   notifications Notification[]
+  reviews      Review[]
+  pollVotes    PollVote[]
+  dishRequests DishRequest[]
+  inspectionVisits InspectionVisit[]
+  scoreDisputes ScoreDispute[]
 }
 
 // Story 4.4 (FR22): in-app inbox is the source of truth; push/email channels fan out
@@ -100,7 +105,133 @@ model Kitchen {
   hygieneScoredAt      DateTime?
   menuDays             MenuDay[]
   orders               Order[]
+  reviews              Review[]
+  polls                Poll[]
+  dishRequests         DishRequest[]
+  healthReports        HealthReport[]
+  inspectionVisits     InspectionVisit[]
+  scoreDisputes        ScoreDispute[]
   createdAt            DateTime  @default(now())
+}
+
+// Story 7.3 (FR20 follow-up): sellers dispute a hygiene score; an admin dismisses the
+// dispute (score stands) or annuls the badge (kitchen returns to "Not yet inspected"
+// until re-inspection — the HygieneScore row itself is never edited, only the badge).
+model ScoreDispute {
+  id         String    @id @default(uuid())
+  kitchenId  String
+  kitchen    Kitchen   @relation(fields: [kitchenId], references: [id])
+  openedById String
+  openedBy   User      @relation(fields: [openedById], references: [id])
+  reason     String
+  status     String    @default("open") // open | dismissed | annulled
+  adminNote  String?
+  createdAt  DateTime  @default(now())
+  resolvedAt DateTime?
+
+  @@index([status, createdAt])
+}
+
+// Story 7.2 (FR20): admin-assigned inspection visits; the inspector sees the street
+// address only for their own assigned visits (NFR5 scoping). status: assigned | scored.
+model InspectionVisit {
+  id           String        @id @default(uuid())
+  kitchenId    String
+  kitchen      Kitchen       @relation(fields: [kitchenId], references: [id])
+  inspectorId  String
+  inspector    User          @relation(fields: [inspectorId], references: [id])
+  scheduledAt  DateTime
+  status       String        @default("assigned")
+  score        HygieneScore?
+  createdAt    DateTime      @default(now())
+
+  @@index([inspectorId, scheduledAt])
+}
+
+// Submit-once (visitId UNIQUE): edits go through the admin dispute flow (Story 7.3).
+// The badge is denormalized to Kitchen.hygieneScoreTotal/hygieneScoredAt on submit.
+model HygieneScore {
+  id          String          @id @default(uuid())
+  visitId     String          @unique
+  visit       InspectionVisit @relation(fields: [visitId], references: [id])
+  total       Int
+  subScores   Json            // {storage, prepSurfaces, temperatureControl, personalHygiene, documentation} 0-20 each
+  photos      String[]
+  submittedAt DateTime        @default(now())
+}
+
+// Story 7.1 (FR19): seller-uploaded health/permit documents (PDF or image), shown on
+// the public kitchen profile with their upload date.
+model HealthReport {
+  id         String   @id @default(uuid())
+  kitchenId  String
+  kitchen    Kitchen  @relation(fields: [kitchenId], references: [id])
+  fileUrl    String
+  filename   String
+  uploadedAt DateTime @default(now())
+
+  @@index([kitchenId, uploadedAt])
+}
+
+// Story 6.1 (FR16): one review per completed order; Kitchen.ratingAvg/ratingCount are
+// denormalized aggregates recomputed on insert.
+model Review {
+  id        String   @id @default(uuid())
+  orderId   String   @unique
+  order     Order    @relation(fields: [orderId], references: [id])
+  kitchenId String
+  kitchen   Kitchen  @relation(fields: [kitchenId], references: [id])
+  buyerId   String
+  buyer     User     @relation(fields: [buyerId], references: [id])
+  rating    Int
+  comment   String?
+  createdAt DateTime @default(now())
+
+  @@index([kitchenId, createdAt])
+}
+
+// Story 6.2 (FR17): a seller polls buyers on candidate upcoming menu items.
+// options is a fixed list of choice labels; PollVote enforces one vote per buyer.
+model Poll {
+  id        String     @id @default(uuid())
+  kitchenId String
+  kitchen   Kitchen    @relation(fields: [kitchenId], references: [id])
+  question  String
+  options   String[]
+  closesAt  DateTime?
+  createdAt DateTime   @default(now())
+  votes     PollVote[]
+
+  @@index([kitchenId, createdAt])
+}
+
+model PollVote {
+  id          String   @id @default(uuid())
+  pollId      String
+  poll        Poll     @relation(fields: [pollId], references: [id])
+  buyerId     String
+  buyer       User     @relation(fields: [buyerId], references: [id])
+  optionIndex Int
+  createdAt   DateTime @default(now())
+
+  @@unique([pollId, buyerId]) // FR17: one vote per buyer per poll
+}
+
+// Story 6.3 (FR18): a buyer asks a kitchen for a dish/cuisine; the seller accepts
+// (notifying the requester) or declines. status: open | accepted | declined.
+model DishRequest {
+  id         String   @id @default(uuid())
+  kitchenId  String
+  kitchen    Kitchen  @relation(fields: [kitchenId], references: [id])
+  buyerId    String
+  buyer      User     @relation(fields: [buyerId], references: [id])
+  text       String
+  status     String   @default("open")
+  sellerNote String?
+  createdAt  DateTime @default(now())
+
+  @@index([kitchenId, createdAt])
+  @@index([buyerId, createdAt])
 }
 
 model Dish {
@@ -152,6 +283,7 @@ model Order {
   idempotencyKey  String      @unique
   items           OrderItem[]
   deliveryJob     DeliveryJob?
+  review          Review?
   createdAt       DateTime    @default(now())
 }
 
