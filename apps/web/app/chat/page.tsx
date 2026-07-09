@@ -27,17 +27,29 @@ function cents(n: number) {
   return `$${(n / 100).toFixed(2)}`;
 }
 
+/** Story 5.2 AC4 — transcripts below this confidence are staged for review, not auto-sent. */
+const CONFIDENCE_THRESHOLD = 0.85;
+const MAX_RECORDING_SECONDS = 60;
+
 export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [pendingSummary, setPendingSummary] = useState<OrderSummary | null>(null);
+  const [recording, setRecording] = useState(false);
+  const [recordSeconds, setRecordSeconds] = useState(0);
+  const [transcribing, setTranscribing] = useState(false);
+  const [voiceNotice, setVoiceNotice] = useState<string | null>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const recordTimerRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
   const bottomRef = useRef<HTMLDivElement>(null);
   const token = typeof window !== "undefined" ? localStorage.getItem("access_token") ?? "" : "";
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  useEffect(() => () => clearInterval(recordTimerRef.current), []);
 
   async function send(text: string) {
     if (!text.trim() || streaming) return;
@@ -111,6 +123,74 @@ export default function ChatPage() {
   function onSubmit(e: FormEvent) {
     e.preventDefault();
     send(input);
+  }
+
+  /** Story 5.3 (FR13) — record ≤60 s, transcribe server-side, then feed the transcript
+   * through the exact same send() path as typed text. Low confidence stages the text in
+   * the input for review instead of auto-sending (Story 5.2 AC4). */
+  async function startRecording() {
+    setVoiceNotice(null);
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch {
+      setVoiceNotice("Microphone unavailable — check the browser permission.");
+      return;
+    }
+    const recorder = new MediaRecorder(stream);
+    const chunks: BlobPart[] = [];
+    recorder.ondataavailable = (e) => e.data.size > 0 && chunks.push(e.data);
+    recorder.onstop = () => {
+      stream.getTracks().forEach((t) => t.stop());
+      clearInterval(recordTimerRef.current);
+      setRecording(false);
+      setRecordSeconds(0);
+      transcribe(new Blob(chunks, { type: recorder.mimeType || "audio/webm" }));
+    };
+    recorderRef.current = recorder;
+    recorder.start();
+    setRecording(true);
+    setRecordSeconds(0);
+    recordTimerRef.current = setInterval(() => {
+      setRecordSeconds((s) => {
+        if (s + 1 >= MAX_RECORDING_SECONDS) recorderRef.current?.stop();
+        return s + 1;
+      });
+    }, 1000);
+  }
+
+  function stopRecording() {
+    recorderRef.current?.stop();
+  }
+
+  async function transcribe(blob: Blob) {
+    setTranscribing(true);
+    try {
+      const data = new FormData();
+      data.append("audio", blob, "voice.webm");
+      const res = await fetch(`${API}/chat/transcribe`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}` },
+        body: data,
+      });
+      if (!res.ok) {
+        setVoiceNotice("Could not transcribe that — try again or type instead.");
+        return;
+      }
+      const body: { transcript: string; confidence: number } = await res.json();
+      if (!body.transcript.trim()) {
+        setVoiceNotice("I didn't catch anything — try again a little louder.");
+        return;
+      }
+      if (body.confidence >= CONFIDENCE_THRESHOLD) {
+        send(body.transcript);
+      } else {
+        setInput(body.transcript);
+        setVoiceNotice("I'm not sure I heard that right — check the text below, then send.");
+      }
+    } finally {
+      setTranscribing(false);
+    }
   }
 
   return (
@@ -219,6 +299,12 @@ export default function ChatPage() {
         <div ref={bottomRef} />
       </div>
 
+      {voiceNotice && (
+        <p role="status" style={{ margin: 0, padding: "6px 16px", fontSize: 13, color: "#92400e", background: "#fef3c7" }}>
+          {voiceNotice}
+        </p>
+      )}
+
       <form
         onSubmit={onSubmit}
         style={{ padding: "12px 16px", borderTop: "1px solid #e5e7eb", display: "flex", gap: 8 }}
@@ -228,7 +314,15 @@ export default function ChatPage() {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           disabled={streaming}
-          placeholder={streaming ? "Assistant is typing…" : "Type a message…"}
+          placeholder={
+            recording
+              ? "Listening…"
+              : transcribing
+                ? "Transcribing…"
+                : streaming
+                  ? "Assistant is typing…"
+                  : "Type a message…"
+          }
           style={{
             flex: 1,
             padding: "10px 14px",
@@ -238,6 +332,26 @@ export default function ChatPage() {
             outline: "none",
           }}
         />
+        <button
+          type="button"
+          onClick={recording ? stopRecording : startRecording}
+          disabled={streaming || transcribing}
+          aria-label={recording ? "Stop recording" : "Record a voice message"}
+          aria-pressed={recording}
+          style={{
+            background: recording ? "#dc2626" : "#f3f4f6",
+            color: recording ? "#fff" : "#111",
+            border: "1px solid #d1d5db",
+            borderRadius: 24,
+            padding: "10px 14px",
+            cursor: "pointer",
+            fontWeight: 600,
+            fontVariantNumeric: "tabular-nums",
+            opacity: streaming || transcribing ? 0.5 : 1,
+          }}
+        >
+          {recording ? `⏹ 0:${String(recordSeconds).padStart(2, "0")}` : transcribing ? "…" : "🎤"}
+        </button>
         <button
           type="submit"
           disabled={streaming || !input.trim()}
