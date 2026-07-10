@@ -343,6 +343,149 @@ input {
   border-radius: 18px 18px 18px 4px;
 }
 
+/* ---------- Hero (home) ---------- */
+
+.hero-glow {
+  position: absolute;
+  inset: -20% -10% auto;
+  height: 70vh;
+  background:
+    radial-gradient(42% 55% at 72% 30%, color-mix(in srgb, var(--accent) 14%, transparent), transparent 70%),
+    radial-gradient(30% 40% at 20% 10%, color-mix(in srgb, var(--accent) 7%, transparent), transparent 70%);
+  pointer-events: none;
+  z-index: -1;
+}
+
+.hero-em {
+  font-style: italic;
+  color: var(--accent);
+  padding-bottom: 4px;
+}
+
+/* ---------- Z-axis cascade: live kitchen cards, physically stacked ---------- */
+
+.cascade {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.cascade-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  padding: 16px 18px;
+  box-shadow: var(--shadow-soft), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  transition: transform 0.5s var(--ease), box-shadow 0.5s var(--ease);
+}
+
+.cascade-card:nth-child(1) {
+  transform: rotate(-2.2deg);
+  z-index: 3;
+}
+
+.cascade-card:nth-child(2) {
+  transform: rotate(1.6deg) translateY(-14px);
+  z-index: 2;
+}
+
+.cascade-card:nth-child(3) {
+  transform: rotate(-1.2deg) translateY(-28px);
+  z-index: 1;
+}
+
+.cascade-card:hover {
+  transform: rotate(0deg) translateY(-34px) scale(1.02);
+  z-index: 4;
+}
+
+/* ---------- Stats strip (real data) ---------- */
+
+.stat-strip {
+  display: flex;
+  gap: 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.stat {
+  flex: 1;
+  padding: 26px 8px;
+  text-align: center;
+}
+
+.stat + .stat {
+  border-left: 1px solid var(--line);
+}
+
+.stat-value {
+  font-size: 34px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  color: var(--accent);
+}
+
+.stat-label {
+  font-size: 13.5px;
+  color: var(--text-2);
+  margin-top: 4px;
+}
+
+/* ---------- Kitchen card grid (home) ---------- */
+
+.kitchen-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 14px;
+}
+
+.kitchen-card {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  padding: 20px;
+  box-shadow: var(--shadow);
+  transition: transform 0.45s var(--ease), box-shadow 0.45s var(--ease);
+}
+
+.kitchen-card:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-soft);
+}
+
+.hero-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+  gap: 48px;
+  align-items: center;
+  padding: 88px 0 72px;
+}
+
+@media (max-width: 767px) {
+  .hero-grid {
+    grid-template-columns: 1fr;
+    gap: 40px;
+    padding: 56px 0 48px;
+  }
+  .kitchen-grid {
+    grid-template-columns: 1fr;
+  }
+  .cascade-card,
+  .cascade-card:nth-child(1),
+  .cascade-card:nth-child(2),
+  .cascade-card:nth-child(3) {
+    transform: none;
+    margin-bottom: 12px;
+  }
+}
+
 /* ---------- Kitchen rows (home) ---------- */
 
 .kitchen-row {
