@@ -60,6 +60,17 @@ model User {
   dishRequests DishRequest[]
   inspectionVisits InspectionVisit[]
   scoreDisputes ScoreDispute[]
+  notificationPreference NotificationPreference?
+}
+
+// Story 4.4 follow-up (FR22): per-user opt-out for the external "buzz me" channels.
+// The in-app inbox is always written; `disabled` holds "category:channel" keys
+// (e.g. "community:email") that suppress that channel for that category.
+model NotificationPreference {
+  userId    String   @id
+  user      User     @relation(fields: [userId], references: [id])
+  disabled  String[]
+  updatedAt DateTime @default(now()) @updatedAt
 }
 
 // Story 4.4 (FR22): in-app inbox is the source of truth; push/email channels fan out

@@ -26,10 +26,13 @@ public class NotificationDispatcher {
     private static final Logger log = LoggerFactory.getLogger(NotificationDispatcher.class);
 
     private final List<NotificationChannel> enabled;
+    private final NotificationPreferencesService preferences;
 
     public NotificationDispatcher(
             List<NotificationChannel> channels,
+            NotificationPreferencesService preferences,
             @Value("${app.notifications.channels:log}") List<String> configured) {
+        this.preferences = preferences;
         Set<String> want = configured.stream().map(String::trim).collect(Collectors.toSet());
         this.enabled = channels.stream().filter(c -> want.contains(c.name())).toList();
         Set<String> present = channels.stream().map(NotificationChannel::name).collect(Collectors.toSet());
@@ -44,7 +47,12 @@ public class NotificationDispatcher {
 
     @TransactionalEventListener(fallbackExecution = true)
     public void onNotificationCreated(NotificationCreated event) {
+        // Load the user's opt-outs once; the inbox row already exists either way (FR22).
+        Set<String> disabled = enabled.isEmpty() ? Set.of() : preferences.disabledFor(event.userId());
         for (NotificationChannel channel : enabled) {
+            if (!NotificationPreferences.allows(disabled, channel.name(), event.type())) {
+                continue; // user muted this channel for this category
+            }
             try {
                 channel.send(event.userId(), event.type(), event.title(), event.body());
             } catch (RuntimeException e) {

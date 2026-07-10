@@ -208,6 +208,20 @@ function NotificationBell({ session }: { session: Session }) {
               </div>
             );
           })}
+          <Link
+            href="/settings/notifications"
+            onClick={() => setOpen(false)}
+            style={{
+              display: "block",
+              padding: "10px 14px",
+              fontSize: 13,
+              textAlign: "center",
+              color: "var(--brand-muted)",
+              borderTop: "1px solid var(--brand-border)",
+            }}
+          >
+            ⚙ Notification settings
+          </Link>
         </div>
       )}
     </div>
