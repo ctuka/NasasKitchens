@@ -51,6 +51,7 @@ export default function Header() {
         {session?.role === "seller" && <Link href="/seller/orders">Orders</Link>}
         {session?.role === "seller" && <Link href="/seller/menu">My Menu</Link>}
         {session?.role === "seller" && <Link href="/seller/kitchen">My Kitchen</Link>}
+        {session?.role === "seller" && <Link href="/seller/earnings">Earnings</Link>}
         {session?.role === "inspector" && <Link href="/inspector/visits">Visits</Link>}
         {session?.role === "admin" && <Link href="/admin">Admin</Link>}
         {session ? (
