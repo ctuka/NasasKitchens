@@ -25,7 +25,12 @@ public record OrderDetailResponse(
         LocalDateTime createdAt,
         List<Item> items,
         String kitchenName,
-        String pickupAddress) {
+        String pickupAddress,
+        Delivery delivery) {
+
+    /** Present only on delivery orders that have a courier job (Story 4.2 dev slice). */
+    public record Delivery(String provider, String status, String trackingUrl, int feeCents) {
+    }
 
     public record Item(
             String id,

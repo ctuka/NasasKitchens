@@ -29,6 +29,46 @@ const KITCHENS = [
     ],
   },
   {
+    seller: { email: "fatma@demo.com" },
+    name: "Fatma's Sarma House",
+    cuisineTag: "turkish",
+    description: "Hand-rolled sarma and stuffed vegetables, Aegean style.",
+    address: "450 Sutter St, San Francisco, CA",
+    lat: 37.7893, lng: -122.4071, // ~0.1 mi
+    dishes: [
+      { name: "Yaprak Sarma", description: "Vine leaves hand-rolled with rice, currants, dill (8 pc)", priceCents: 1250, dietaryTags: ["vegetarian", "vegan"], portions: 14 },
+      { name: "Lahana Sarma", description: "Cabbage rolls with spiced beef and rice, lemon broth", priceCents: 1350, dietaryTags: [], portions: 10 },
+      { name: "Biber Dolma", description: "Bell peppers stuffed with herbed rice, served warm", priceCents: 1150, dietaryTags: ["vegetarian"], portions: 8 },
+    ],
+  },
+  // Cyprus cluster (Lefkoşa) — so "yakınımda" works for testers located there too.
+  {
+    seller: { email: "emine@demo.com" },
+    name: "Emine's Manti Evi",
+    cuisineTag: "turkish",
+    description: "El açması mantı ve ev yemekleri, Lefkoşa'nın kalbinde.",
+    address: "Girne Caddesi 42, Lefkoşa",
+    lat: 35.1856, lng: 33.3823,
+    dishes: [
+      { name: "El Açması Mantı", description: "Kıymalı el mantısı, sarımsaklı yoğurt, kızgın tereyağı", priceCents: 1400, dietaryTags: [], portions: 12 },
+      { name: "Kıbrıs Makarnası (Magarına Bulli)", description: "Tavuk suyunda makarna, rendelenmiş hellim", priceCents: 1100, dietaryTags: [], portions: 10 },
+      { name: "Mercimek Çorbası", description: "Günlük taze mercimek çorbası, limonla", priceCents: 600, dietaryTags: ["vegetarian", "vegan"], portions: 15 },
+    ],
+  },
+  {
+    seller: { email: "havva@demo.com" },
+    name: "Havva's Sarma Kosesi",
+    cuisineTag: "turkish",
+    description: "İncecik yaprak sarma ve dolma çeşitleri, anne usulü.",
+    address: "Dereboyu Caddesi 15, Lefkoşa",
+    lat: 35.1932, lng: 33.3711, // ~0.7 mi
+    dishes: [
+      { name: "Yaprak Sarma", description: "Zeytinyağlı incecik yaprak sarma (10 adet)", priceCents: 1200, dietaryTags: ["vegetarian", "vegan"], portions: 14 },
+      { name: "Etli Lahana Sarma", description: "Kıymalı lahana sarması, limonlu et suyu", priceCents: 1300, dietaryTags: [], portions: 10 },
+      { name: "Kolokas Dolması", description: "Kıbrıs usulü kolokas dolması", priceCents: 1250, dietaryTags: [], portions: 8 },
+    ],
+  },
+  {
     seller: { email: "mei@demo.com" },
     name: "Mei's Sichuan Home Cooking",
     cuisineTag: "chinese",

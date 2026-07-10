@@ -1,7 +1,9 @@
 package com.nanaskitchens.api.orders;
 
+import com.nanaskitchens.api.delivery.DeliveryService;
 import com.nanaskitchens.api.inventory.InventoryService;
 import com.nanaskitchens.api.kitchens.AddressCrypto;
+import com.nanaskitchens.api.payments.PaymentsService;
 import com.nanaskitchens.api.kitchens.dto.MenuDayResponse;
 import com.nanaskitchens.api.orders.dto.CreateOrderRequest;
 import com.nanaskitchens.api.orders.dto.OrderDetailResponse;
@@ -37,13 +39,18 @@ public class OrdersService {
     private final InventoryService inventory;
     private final AddressCrypto addressCrypto;
     private final JsonMapper jsonMapper;
+    private final PaymentsService payments;
+    private final DeliveryService delivery;
 
     public OrdersService(
-            JdbcClient db, InventoryService inventory, AddressCrypto addressCrypto, JsonMapper jsonMapper) {
+            JdbcClient db, InventoryService inventory, AddressCrypto addressCrypto, JsonMapper jsonMapper,
+            PaymentsService payments, DeliveryService delivery) {
         this.db = db;
         this.inventory = inventory;
         this.addressCrypto = addressCrypto;
         this.jsonMapper = jsonMapper;
+        this.payments = payments;
+        this.delivery = delivery;
     }
 
     /**
@@ -109,6 +116,7 @@ public class OrdersService {
 
         // Atomic: decrement + order in one transaction (Story 2.3 / architecture Workflow 1)
         String orderId = UUID.randomUUID().toString();
+        String idempotencyKey = UUID.randomUUID().toString(); // doubles as Stripe idempotency key (Story 3.4)
         for (CreateOrderRequest.Item item : input.items()) {
             inventory.decrement(item.menuItemId(), item.qty());
         }
@@ -128,8 +136,7 @@ public class OrdersService {
                 .param("fulfillment", input.fulfillment())
                 .param("totalCents", totalCents)
                 .param("commissionCents", commissionCents)
-                // becomes the Stripe draft id in Story 3.4
-                .param("idempotencyKey", UUID.randomUUID().toString())
+                .param("idempotencyKey", idempotencyKey)
                 .update();
         for (CreateOrderRequest.Item item : input.items()) {
             db.sql("""
@@ -143,6 +150,20 @@ public class OrdersService {
                     .param("unitPriceCents", valid.get(item.menuItemId()).priceCents())
                     .update();
         }
+        // Story 3.4: charge inside the transaction — a failed payment rolls everything back.
+        String paymentIntentId = payments.charge(totalCents, idempotencyKey, orderId);
+        if (paymentIntentId != null) {
+            db.sql("UPDATE \"Order\" SET \"paymentIntentId\" = :pi WHERE id = :id")
+                    .param("pi", paymentIntentId)
+                    .param("id", orderId)
+                    .update();
+        }
+
+        // Story 4.2 (dev slice): delivery orders get a courier job right away.
+        if ("delivery".equals(input.fulfillment())) {
+            delivery.createJob(orderId);
+        }
+
         db.sql("""
                 INSERT INTO "AuditLog" (id, actor, entity, action, "after")
                 VALUES (:id, :actor, :entity, 'create', :after::jsonb)
@@ -161,11 +182,16 @@ public class OrdersService {
         record OrderRow(String id, String buyerId, String kitchenId, String menuDayId, String status,
                 LocalDateTime readySlot, String fulfillment, int totalCents, int commissionCents,
                 String paymentIntentId, String idempotencyKey, LocalDateTime createdAt,
-                String kitchenName, String addressEncrypted) {
+                String kitchenName, String addressEncrypted,
+                String deliveryProvider, String deliveryStatus, String trackingUrl, Integer deliveryFeeCents) {
         }
         OrderRow order = db.sql("""
-                SELECT o.*, k.name AS kitchen_name, k."addressEncrypted"
-                FROM "Order" o JOIN "Kitchen" k ON k.id = o."kitchenId"
+                SELECT o.*, k.name AS kitchen_name, k."addressEncrypted",
+                       dj.provider::text AS delivery_provider, dj.status AS delivery_status,
+                       dj."trackingUrl", dj."feeCents" AS delivery_fee_cents
+                FROM "Order" o
+                JOIN "Kitchen" k ON k.id = o."kitchenId"
+                LEFT JOIN "DeliveryJob" dj ON dj."orderId" = o.id
                 WHERE o.id = :id
                 """)
                 .param("id", orderId)
@@ -176,7 +202,9 @@ public class OrdersService {
                         rs.getInt("totalCents"), rs.getInt("commissionCents"),
                         rs.getString("paymentIntentId"), rs.getString("idempotencyKey"),
                         rs.getTimestamp("createdAt").toLocalDateTime(),
-                        rs.getString("kitchen_name"), rs.getString("addressEncrypted")))
+                        rs.getString("kitchen_name"), rs.getString("addressEncrypted"),
+                        rs.getString("delivery_provider"), rs.getString("delivery_status"),
+                        rs.getString("trackingUrl"), rs.getObject("delivery_fee_cents", Integer.class)))
                 .optional()
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
         if (!order.buyerId().equals(buyerId)) {
@@ -224,7 +252,12 @@ public class OrdersService {
                 order.readySlot(), order.fulfillment(), order.totalCents(), order.commissionCents(),
                 order.paymentIntentId(), order.idempotencyKey(), order.createdAt(), items,
                 order.kitchenName(),
-                discloseAddress ? addressCrypto.decrypt(order.addressEncrypted()) : null);
+                discloseAddress ? addressCrypto.decrypt(order.addressEncrypted()) : null,
+                order.deliveryStatus() == null
+                        ? null
+                        : new OrderDetailResponse.Delivery(
+                                order.deliveryProvider(), order.deliveryStatus(),
+                                order.trackingUrl(), order.deliveryFeeCents()));
     }
 
     @Transactional
@@ -275,17 +308,31 @@ public class OrdersService {
         return row;
     }
 
-    /** Accepts ISO datetimes with or without offset, mirroring JS `new Date(string)`. */
+    /**
+     * Accepts ISO datetimes with or without offset (mirroring JS `new Date(string)`), plus the
+     * human formats the chat agent produces: "17:00" or a slot range like "17:00 - 17:30"
+     * (start of the range wins, interpreted as today UTC — menus are per-day).
+     */
     private static LocalDateTime parseReadySlot(String value) {
+        String v = value.trim();
         try {
-            return LocalDateTime.ofInstant(Instant.parse(value), ZoneOffset.UTC);
-        } catch (DateTimeParseException e) {
-            try {
-                return LocalDateTime.parse(value);
-            } catch (DateTimeParseException e2) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "READY_SLOT_INVALID");
+            return LocalDateTime.ofInstant(Instant.parse(v), ZoneOffset.UTC);
+        } catch (DateTimeParseException ignored) {
+        }
+        try {
+            return LocalDateTime.parse(v);
+        } catch (DateTimeParseException ignored) {
+        }
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("^(\\d{1,2}):(\\d{2})").matcher(v);
+        if (m.find()) {
+            int hour = Integer.parseInt(m.group(1));
+            int minute = Integer.parseInt(m.group(2));
+            if (hour <= 23 && minute <= 59) {
+                return java.time.LocalDate.now(ZoneOffset.UTC).atTime(hour, minute);
             }
         }
+        throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "READY_SLOT_INVALID: use ISO datetime (2026-07-10T17:00:00Z) or HH:mm");
     }
 
     private static List<String> stringList(ResultSet rs, String column) throws SQLException {
