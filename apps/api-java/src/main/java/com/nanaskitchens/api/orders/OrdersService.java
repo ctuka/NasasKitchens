@@ -202,14 +202,17 @@ public class OrdersService {
     }
 
     /**
-     * FR5's 10-mile radius applies to delivery drop-offs too. The address is geocoded (dev:
-     * Nominatim) and measured against the kitchen's PostGIS point. Unresolvable addresses skip
-     * the check rather than block the order — geocoder coverage is patchy in some regions.
+     * FR5's 10-mile radius applies to delivery drop-offs too. The address is geocoded with
+     * tiered fallbacks (dev: Nominatim) and measured against the kitchen's PostGIS point.
+     * If no variant of the address resolves, the order is rejected so the buyer can give a
+     * clearer address — never delivered blind.
      */
     private void checkDeliveryRadius(String kitchenId, String deliveryAddress) {
         GeocodingService.Point point = geocoding.geocode(deliveryAddress);
         if (point == null) {
-            return;
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "ADDRESS_NOT_FOUND: could not locate this address on the map. Ask the buyer "
+                            + "for a clearer address including the town/city name.");
         }
         Double meters = db.sql("""
                 SELECT ST_Distance(geo, ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography)

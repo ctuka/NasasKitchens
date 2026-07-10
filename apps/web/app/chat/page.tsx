@@ -52,6 +52,12 @@ function cents(n: number) {
   return `$${(n / 100).toFixed(2)}`;
 }
 
+/** Renders ISO datetimes in locale format; falls back to the raw text ("18:00", "ASAP"). */
+function fmtSlot(value: string) {
+  const t = Date.parse(value);
+  return Number.isNaN(t) ? value : new Date(t).toLocaleString();
+}
+
 /** Geocodes the drop-off address (OpenStreetMap Nominatim) and embeds a marked map. */
 function AddressMap({ address }: { address: string }) {
   const [coords, setCoords] = useState<{ lat: number; lon: number } | null>(null);
@@ -61,17 +67,33 @@ function AddressMap({ address }: { address: string }) {
     let alive = true;
     setCoords(null);
     setFailed(false);
-    fetch(
-      `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(address)}`,
-      { headers: { accept: "application/json" } },
-    )
-      .then((r) => r.json())
-      .then((d) => {
+    // Same tiered fallback as the server: drop leading tokens until a variant resolves.
+    const tokens = address.trim().replace(/[,;]+/g, " ").split(/\s+/);
+    const candidates = [];
+    for (let drop = 0; drop <= Math.min(3, tokens.length - 2); drop++) {
+      candidates.push(tokens.slice(drop).join(" "));
+    }
+    (async () => {
+      for (const candidate of candidates) {
+        try {
+          const r = await fetch(
+            `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(candidate)}`,
+            { headers: { accept: "application/json" } },
+          );
+          const d = await r.json();
+          if (!alive) return;
+          if (Array.isArray(d) && d[0]) {
+            setCoords({ lat: +d[0].lat, lon: +d[0].lon });
+            return;
+          }
+        } catch {
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1100));
         if (!alive) return;
-        if (Array.isArray(d) && d[0]) setCoords({ lat: +d[0].lat, lon: +d[0].lon });
-        else setFailed(true);
-      })
-      .catch(() => alive && setFailed(true));
+      }
+      if (alive) setFailed(true);
+    })();
     return () => {
       alive = false;
     };
@@ -598,7 +620,7 @@ export default function ChatPage() {
               <span>{cents(pendingSummary.summary.totalCents)}</span>
             </div>
             <p style={{ margin: "10px 0 2px", fontSize: 14, color: "var(--text-2)" }}>
-              Ready {new Date(pendingSummary.summary.readySlot).toLocaleString()}
+              Ready {fmtSlot(pendingSummary.summary.readySlot)}
               {", "}
               {pendingSummary.summary.fulfillment}
             </p>

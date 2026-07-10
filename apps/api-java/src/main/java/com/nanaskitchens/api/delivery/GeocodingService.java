@@ -34,7 +34,32 @@ public class GeocodingService {
         this.jsonMapper = jsonMapper;
     }
 
+    /**
+     * Tiered lookup: the full address first, then progressively drop leading tokens
+     * ("sunset valley a30 kalkanli guzelyurt" → ... → "kalkanli guzelyurt") so site/house
+     * codes that OSM does not know cannot hide the locality. Returns null only when no
+     * variant resolves.
+     */
     public Point geocode(String address) {
+        String[] tokens = address.trim().replaceAll("[,;]+", " ").split("\\s+");
+        for (int drop = 0; drop <= Math.min(3, tokens.length - 2); drop++) {
+            String candidate = String.join(" ",
+                    java.util.Arrays.copyOfRange(tokens, drop, tokens.length));
+            Point point = lookup(candidate);
+            if (point != null) {
+                return point;
+            }
+            try {
+                Thread.sleep(1100); // Nominatim usage policy: max 1 request/second
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return null;
+            }
+        }
+        return null;
+    }
+
+    private Point lookup(String address) {
         try {
             String url = "https://nominatim.openstreetmap.org/search?format=json&limit=1&q="
                     + URLEncoder.encode(address, StandardCharsets.UTF_8);
