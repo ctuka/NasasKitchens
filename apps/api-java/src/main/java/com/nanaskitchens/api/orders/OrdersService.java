@@ -229,7 +229,7 @@ public class OrdersService {
         List<OrderDetailResponse.Item> items = db.sql("""
                 SELECT oi.id, oi."orderId", oi."menuItemId", oi.qty, oi."unitPriceCents",
                        mi."menuDayId", mi."dishId", mi."portionsTotal", mi."portionsRemaining",
-                       d."kitchenId" AS dish_kitchen_id, d.name, d.description, d.photo,
+                       d."kitchenId" AS dish_kitchen_id, d.name, d.description, d.photo, d.calories,
                        d."priceCents", d."dietaryTags"
                 FROM "OrderItem" oi
                 JOIN "MenuItem" mi ON mi.id = oi."menuItemId"
@@ -255,6 +255,7 @@ public class OrdersService {
                                         rs.getString("name"),
                                         rs.getString("description"),
                                         rs.getString("photo"),
+                                        rs.getObject("calories", Integer.class),
                                         rs.getInt("priceCents"),
                                         stringList(rs, "dietaryTags")))))
                 .list();

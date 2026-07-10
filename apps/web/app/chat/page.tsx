@@ -22,6 +22,23 @@ interface OrderSummary {
   draft: Record<string, unknown>;
 }
 
+interface MenuCard {
+  type: "menu";
+  kitchenName: string;
+  kitchenId: string;
+  menuDayId: string;
+  items: {
+    menuItemId: string;
+    name: string;
+    description?: string | null;
+    photo?: string | null;
+    calories?: number | null;
+    priceCents: number;
+    portionsLeft?: number | null;
+    dietaryTags?: string[] | null;
+  }[];
+}
+
 // Java backend (apps/api-java); it proxies not-yet-ported endpoints to the legacy NestJS API.
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
 
@@ -156,6 +173,8 @@ export default function ChatPage() {
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [pendingSummary, setPendingSummary] = useState<OrderSummary | null>(null);
+  const [pendingMenu, setPendingMenu] = useState<MenuCard | null>(null);
+  const [picked, setPicked] = useState<Record<string, number>>({});
   const bottomRef = useRef<HTMLDivElement>(null);
   const token = typeof window !== "undefined" ? localStorage.getItem("access_token") ?? "" : "";
 
@@ -175,6 +194,8 @@ export default function ChatPage() {
     setMessages(next);
     setInput("");
     setStreaming(true);
+    setPendingMenu(null);
+    setPicked({});
 
     let assistantText = "";
     const addChunk = (delta: string) => {
@@ -217,16 +238,21 @@ export default function ChatPage() {
         }
       }
 
-      // Try to parse a confirmation summary embedded in assistant text
-      const summaryMatch = assistantText.match(/```json\n([\s\S]*?)\n```/);
-      if (summaryMatch) {
+      // Structured card blocks embedded in assistant text (menu picker / order summary).
+      const blockMatch = assistantText.match(/```json\n([\s\S]*?)\n```/);
+      if (blockMatch) {
         try {
-          const parsed = JSON.parse(summaryMatch[1]);
-          if (parsed.confirmed === false && parsed.summary) {
+          const parsed = JSON.parse(blockMatch[1]);
+          let handled = false;
+          if (parsed.type === "menu" && Array.isArray(parsed.items)) {
+            setPendingMenu(parsed);
+            handled = true;
+          } else if (parsed.confirmed === false && parsed.summary) {
             setPendingSummary(parsed);
-            // The card renders the summary; don't also show the raw JSON in the bubble.
-            assistantText = assistantText.replace(summaryMatch[0], "").trim();
+            handled = true;
           }
+          // The card renders the data; don't also show the raw JSON in the bubble.
+          if (handled) assistantText = assistantText.replace(blockMatch[0], "").trim();
         } catch {}
       }
 
@@ -256,10 +282,30 @@ export default function ChatPage() {
     });
     const body = await res.json();
     setPendingSummary(null);
+    // POST /orders answers {confirmed: true, order: {...}} on success.
+    const order = body.order ?? body;
+    const tracking = order?.delivery?.trackingUrl
+      ? `\nTrack your delivery: [tracking link](${order.delivery.trackingUrl})`
+      : "";
     setMessages((prev) => [
       ...prev,
-      { role: "assistant", content: res.ok ? `Order placed! ID: ${body.id}` : `Error: ${body.message}` },
+      {
+        role: "assistant",
+        content: res.ok ? `Order placed! ID: ${order.id}${tracking}` : `Error: ${body.message}`,
+      },
     ]);
+  }
+
+  function addPickedToOrder() {
+    if (!pendingMenu) return;
+    const parts = pendingMenu.items
+      .filter((it) => (picked[it.menuItemId] ?? 0) > 0)
+      .map((it) => `${picked[it.menuItemId]} x ${it.name}`);
+    if (parts.length === 0) return;
+    const text = `I'd like ${parts.join(", ")} from ${pendingMenu.kitchenName}.`;
+    setPendingMenu(null);
+    setPicked({});
+    send(text);
   }
 
   function onSubmit(e: FormEvent) {
@@ -367,6 +413,128 @@ export default function ChatPage() {
               <span className="typing-dot" />
               <span className="typing-dot" />
               <span className="typing-dot" />
+            </div>
+          </div>
+        )}
+
+        {/* Dish picker card: photos, ingredients, calories, quantity steppers */}
+        {pendingMenu && (
+          <div className="fade-up shell" style={{ margin: "14px 0" }}>
+            <div className="shell-core" style={{ padding: "18px 20px" }}>
+              <h2 style={{ margin: "0 0 2px", fontSize: 16, fontWeight: 700 }}>
+                {pendingMenu.kitchenName}
+              </h2>
+              <p style={{ margin: "0 0 6px", color: "var(--text-2)", fontSize: 13.5 }}>
+                Pick your dishes, then add them to the order.
+              </p>
+              {pendingMenu.items.map((it) => {
+                const q = picked[it.menuItemId] ?? 0;
+                const max = it.portionsLeft ?? 99;
+                return (
+                  <div key={it.menuItemId} className="dish-row">
+                    {it.photo ? (
+                      <img src={it.photo} alt={it.name} className="dish-photo" />
+                    ) : (
+                      <div className="dish-photo" />
+                    )}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 600, fontSize: 15 }}>{it.name}</div>
+                      {it.description && (
+                        <div
+                          style={{
+                            fontSize: 13,
+                            color: "var(--text-2)",
+                            marginTop: 2,
+                            lineHeight: 1.45,
+                          }}
+                        >
+                          {it.description}
+                        </div>
+                      )}
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 8,
+                          marginTop: 6,
+                          flexWrap: "wrap",
+                        }}
+                      >
+                        <span style={{ fontWeight: 700, fontSize: 14 }}>{cents(it.priceCents)}</span>
+                        {typeof it.calories === "number" && (
+                          <span className="kcal">~{it.calories} kcal</span>
+                        )}
+                        {typeof it.portionsLeft === "number" && (
+                          <span style={{ fontSize: 12.5, color: "var(--text-3)" }}>
+                            {it.portionsLeft} left
+                          </span>
+                        )}
+                        {(it.dietaryTags ?? []).map((tag) => (
+                          <span key={tag} className="kcal" style={{ textTransform: "capitalize" }}>
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="stepper" aria-label={`Quantity for ${it.name}`}>
+                      <button
+                        type="button"
+                        disabled={q === 0}
+                        onClick={() => setPicked({ ...picked, [it.menuItemId]: Math.max(0, q - 1) })}
+                        aria-label={`Remove one ${it.name}`}
+                      >
+                        &minus;
+                      </button>
+                      <span className="qty">{q}</span>
+                      <button
+                        type="button"
+                        disabled={q >= max}
+                        onClick={() => setPicked({ ...picked, [it.menuItemId]: q + 1 })}
+                        aria-label={`Add one ${it.name}`}
+                      >
+                        +
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+              {(() => {
+                const count = Object.values(picked).reduce((a, b) => a + b, 0);
+                const total = pendingMenu.items.reduce(
+                  (sum, it) => sum + (picked[it.menuItemId] ?? 0) * it.priceCents,
+                  0,
+                );
+                return (
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      marginTop: 14,
+                      gap: 12,
+                    }}
+                  >
+                    <span style={{ fontSize: 14.5, color: "var(--text-2)" }}>
+                      {count > 0 ? (
+                        <>
+                          {count} item{count === 1 ? "" : "s"},{" "}
+                          <strong style={{ color: "var(--text)" }}>{cents(total)}</strong>
+                        </>
+                      ) : (
+                        "Nothing picked yet"
+                      )}
+                    </span>
+                    <button
+                      onClick={addPickedToOrder}
+                      disabled={count === 0 || streaming}
+                      className="btn btn-primary"
+                      style={{ padding: "10px 22px" }}
+                    >
+                      Add to order
+                    </button>
+                  </div>
+                );
+              })()}
             </div>
           </div>
         )}

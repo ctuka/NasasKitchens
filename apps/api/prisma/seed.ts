@@ -123,6 +123,23 @@ const KITCHENS = [
   },
 ];
 
+/** Dev photo + kcal metadata by dish-name keyword (mirrors /public/dishes assets). */
+function dishMeta(name: string): { photo: string; calories: number } {
+  const n = name.toLowerCase();
+  if (n.includes("mant")) return { photo: "/dishes/manti.jpg", calories: 560 };
+  if (n.includes("yaprak sarma")) return { photo: "/dishes/sarma.jpg", calories: 320 };
+  if (n.includes("lahana sarma")) return { photo: "/dishes/sarma.jpg", calories: 430 };
+  if (n.includes("dolma")) return { photo: "/dishes/dolma.jpg", calories: 350 };
+  if (n.includes("gozleme")) return { photo: "/dishes/gozleme.jpg", calories: 480 };
+  if (n.includes("mercimek")) return { photo: "/dishes/lentil.jpg", calories: 240 };
+  if (n.includes("makarna")) return { photo: "/dishes/manti.jpg", calories: 520 };
+  if (n.includes("wot") || n.includes("veggie combo")) return { photo: "/dishes/injera.jpg", calories: 500 };
+  if (n.includes("mapo") || n.includes("dan dan")) return { photo: "/dishes/mapo.jpg", calories: 450 };
+  if (n.includes("cucumber")) return { photo: "/dishes/mapo.jpg", calories: 120 };
+  if (n.includes("mole") || n.includes("tamales") || n.includes("tlayuda")) return { photo: "/dishes/mole.jpg", calories: 550 };
+  return { photo: "/dishes/gozleme.jpg", calories: 420 };
+}
+
 async function main() {
   const passwordHash = await argon2.hash("demo1234");
 
@@ -175,6 +192,7 @@ async function main() {
         },
       });
       for (const d of k.dishes) {
+        const meta = dishMeta(d.name);
         const dish = await prisma.dish.create({
           data: {
             kitchenId: kitchen.id,
@@ -182,6 +200,8 @@ async function main() {
             description: d.description,
             priceCents: d.priceCents,
             dietaryTags: d.dietaryTags,
+            photo: meta.photo,
+            calories: meta.calories,
           },
         });
         await prisma.menuItem.create({

@@ -177,6 +177,7 @@ public class KitchensService {
                        md."readyWindows"::text AS ready_windows,
                        mi.id AS item_id, mi."dishId", mi."portionsTotal", mi."portionsRemaining",
                        d.name AS dish_name, d.description AS dish_description, d.photo AS dish_photo,
+                       d.calories AS dish_calories,
                        d."priceCents", d."dietaryTags", d."kitchenId" AS dish_kitchen_id
                 FROM "MenuDay" md
                 LEFT JOIN "MenuItem" mi ON mi."menuDayId" = md.id
@@ -206,6 +207,7 @@ public class KitchensService {
                                         rs.getString("dish_name"),
                                         rs.getString("dish_description"),
                                         rs.getString("dish_photo"),
+                                        rs.getObject("dish_calories", Integer.class),
                                         rs.getInt("priceCents"),
                                         stringList(rs, "dietaryTags"))));
                     }

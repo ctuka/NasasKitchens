@@ -92,6 +92,8 @@ model Dish {
   name        String
   description String
   photo       String?
+  // Approximate kcal per portion, entered by the seller
+  calories    Int?
   priceCents  Int
   dietaryTags String[]
   menuItems   MenuItem[]
