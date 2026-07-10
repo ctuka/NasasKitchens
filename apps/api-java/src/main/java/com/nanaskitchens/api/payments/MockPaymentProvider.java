@@ -29,6 +29,11 @@ public class MockPaymentProvider implements PaymentProvider {
     }
 
     @Override
+    public String refund(String paymentIntentId, int amountCents) {
+        return "mockre_" + UUID.randomUUID();
+    }
+
+    @Override
     public String publishableKey() {
         return null;
     }

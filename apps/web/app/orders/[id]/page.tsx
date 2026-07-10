@@ -28,6 +28,7 @@ interface OrderDetail {
   readySlot: string;
   fulfillment: string;
   totalCents: number;
+  refundedAt: string | null;
   items: OrderItem[];
   kitchenId: string;
   kitchenName: string;
@@ -125,8 +126,14 @@ export default function OrderPage() {
       </div>
 
       <div className="card" style={{ marginBottom: 16 }}>
-        <div style={{ marginBottom: 12 }}>
+        <div style={{ marginBottom: 12, display: "flex", gap: 6, flexWrap: "wrap" }}>
           <span className="badge portions">{STATUS_LABEL[order.status] ?? order.status}</span>
+          {/* FR21 — captured payments come back automatically on decline/cancel. */}
+          {order.refundedAt && (
+            <span className="badge hygiene">
+              💸 {money(order.totalCents)} refunded · {new Date(order.refundedAt).toLocaleDateString()}
+            </span>
+          )}
         </div>
         <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
           <span style={{ color: "var(--brand-muted)" }}>Ready at</span>

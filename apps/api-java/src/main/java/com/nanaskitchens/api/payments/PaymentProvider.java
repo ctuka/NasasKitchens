@@ -25,6 +25,13 @@ public interface PaymentProvider {
      */
     boolean tryCancelIntent(String paymentIntentId);
 
+    /**
+     * FR21 — refunds a captured payment when its order is declined or cancelled. Returns
+     * the provider refund id, or null when the refund could not be issued; the caller
+     * records the failure for manual follow-up instead of blocking the order transition.
+     */
+    String refund(String paymentIntentId, int amountCents);
+
     /** Client-side key for the payment sheet; null when the provider needs no client step. */
     String publishableKey();
 

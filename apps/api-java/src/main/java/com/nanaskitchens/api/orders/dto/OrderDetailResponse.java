@@ -22,6 +22,7 @@ public record OrderDetailResponse(
         int totalCents,
         int commissionCents,
         String paymentIntentId,
+        LocalDateTime refundedAt,
         String idempotencyKey,
         LocalDateTime createdAt,
         List<Item> items,

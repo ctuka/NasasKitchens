@@ -231,8 +231,8 @@ public class OrdersService {
     public OrderDetailResponse detail(String buyerId, String orderId) {
         record OrderRow(String id, String buyerId, String kitchenId, String menuDayId, String status,
                 LocalDateTime readySlot, String fulfillment, int totalCents, int commissionCents,
-                String paymentIntentId, String idempotencyKey, LocalDateTime createdAt,
-                String kitchenName, String addressEncrypted) {
+                String paymentIntentId, LocalDateTime refundedAt, String idempotencyKey,
+                LocalDateTime createdAt, String kitchenName, String addressEncrypted) {
         }
         OrderRow order = db.sql("""
                 SELECT o.*, k.name AS kitchen_name, k."addressEncrypted"
@@ -245,7 +245,11 @@ public class OrdersService {
                         rs.getString("menuDayId"), rs.getString("status"),
                         rs.getTimestamp("readySlot").toLocalDateTime(), rs.getString("fulfillment"),
                         rs.getInt("totalCents"), rs.getInt("commissionCents"),
-                        rs.getString("paymentIntentId"), rs.getString("idempotencyKey"),
+                        rs.getString("paymentIntentId"),
+                        rs.getTimestamp("refundedAt") == null
+                                ? null
+                                : rs.getTimestamp("refundedAt").toLocalDateTime(),
+                        rs.getString("idempotencyKey"),
                         rs.getTimestamp("createdAt").toLocalDateTime(),
                         rs.getString("kitchen_name"), rs.getString("addressEncrypted")))
                 .optional()
@@ -293,8 +297,8 @@ public class OrdersService {
         return new OrderDetailResponse(
                 order.id(), order.buyerId(), order.kitchenId(), order.menuDayId(), order.status(),
                 order.readySlot(), order.fulfillment(), order.totalCents(), order.commissionCents(),
-                order.paymentIntentId(), order.idempotencyKey(), order.createdAt(), items,
-                order.kitchenName(),
+                order.paymentIntentId(), order.refundedAt(), order.idempotencyKey(), order.createdAt(),
+                items, order.kitchenName(),
                 discloseAddress ? addressCrypto.decrypt(order.addressEncrypted()) : null,
                 deliveryService.findByOrderId(orderId));
     }
@@ -307,11 +311,11 @@ public class OrdersService {
     @Transactional
     public Map<String, Object> transition(String sellerId, String orderId, String target) {
         record Row(String status, String fulfillment, String kitchenSellerId, String buyerId,
-                String kitchenName) {
+                String kitchenName, String paymentIntentId, int totalCents) {
         }
         Row order = db.sql("""
                 SELECT o.status, o.fulfillment, k."sellerId" AS kitchen_seller_id,
-                       o."buyerId", k.name AS kitchen_name
+                       o."buyerId", k.name AS kitchen_name, o."paymentIntentId", o."totalCents"
                 FROM "Order" o JOIN "Kitchen" k ON k.id = o."kitchenId"
                 WHERE o.id = :id
                 FOR UPDATE OF o
@@ -320,7 +324,8 @@ public class OrdersService {
                 .query((rs, n) -> new Row(
                         rs.getString("status"), rs.getString("fulfillment"),
                         rs.getString("kitchen_seller_id"), rs.getString("buyerId"),
-                        rs.getString("kitchen_name")))
+                        rs.getString("kitchen_name"), rs.getString("paymentIntentId"),
+                        rs.getInt("totalCents")))
                 .optional()
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
         if (!sellerId.equals(order.kitchenSellerId())) {
@@ -331,6 +336,7 @@ public class OrdersService {
                     HttpStatus.BAD_REQUEST, "INVALID_TRANSITION:" + order.status() + "->" + target);
         }
 
+        boolean refunded = false;
         if ("declined".equals(target)) {
             record ItemQty(String menuItemId, int qty) {
             }
@@ -343,6 +349,9 @@ public class OrdersService {
                 inventory.restore(item.menuItemId(), item.qty()); // Story 2.3 AC2
             }
             eventPublisher.publishEvent(new PortionsChanged(items.stream().map(ItemQty::menuItemId).toList()));
+            // FR21 — a declined order was already paid (confirmed): refund automatically.
+            refunded = order.paymentIntentId() != null
+                    && issueRefund(orderId, order.paymentIntentId(), order.totalCents()) != null;
         }
 
         db.sql("UPDATE \"Order\" SET status = :status WHERE id = :id")
@@ -364,7 +373,11 @@ public class OrdersService {
             case "accepted" -> notifications.notify(order.buyerId(), "order_accepted", "Order accepted",
                     order.kitchenName() + " accepted your order.", data);
             case "declined" -> notifications.notify(order.buyerId(), "order_declined", "Order declined",
-                    order.kitchenName() + " couldn't take your order — your portions were released.", data);
+                    order.kitchenName() + " couldn't take your order — "
+                            + (refunded
+                                    ? "your payment was refunded in full."
+                                    : "your portions were released."),
+                    data);
             case "preparing" -> notifications.notify(order.buyerId(), "order_preparing", "In the kitchen",
                     order.kitchenName() + " is preparing your food.", data);
             case "ready" -> notifications.notify(order.buyerId(), "order_ready",
@@ -456,10 +469,11 @@ public class OrdersService {
         if (FINAL_STATUSES.contains((String) order.get("status"))) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "NOT_CANCELLABLE");
         }
+        String previousStatus = (String) order.get("status");
         // Pending = the buyer may still have an open payment sheet: cancel the intent first
         // so the money can't be captured after we release the portions. If the intent is
         // already terminal (paid a moment ago), let the succeeded webhook settle it instead.
-        if ("pending".equals(order.get("status"))
+        if ("pending".equals(previousStatus)
                 && order.get("paymentIntentId") != null
                 && !payments.tryCancelIntent((String) order.get("paymentIntentId"))) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "PAYMENT_SETTLING");
@@ -475,6 +489,19 @@ public class OrdersService {
         }
         db.sql("UPDATE \"Order\" SET status = 'cancelled' WHERE id = :id").param("id", orderId).update();
         order.put("status", "cancelled");
+        // FR21 — anything past pending was already captured: refund automatically and
+        // tell the buyer (the pending path above never captured, so nothing to return).
+        if (!"pending".equals(previousStatus) && order.get("paymentIntentId") != null) {
+            String refundId = issueRefund(
+                    orderId, (String) order.get("paymentIntentId"), (Integer) order.get("totalCents"));
+            if (refundId != null) {
+                order.put("refundId", refundId);
+                notifications.notify(buyerId, "payment_refunded", "Refund issued",
+                        String.format("Your $%.2f payment is on its way back to you.",
+                                ((Integer) order.get("totalCents")) / 100.0),
+                        Map.of("orderId", orderId));
+            }
+        }
         // FR22 — the seller learns the slot freed up.
         String sellerId = db.sql("SELECT \"sellerId\" FROM \"Kitchen\" WHERE id = :id")
                 .param("id", order.get("kitchenId"))
@@ -506,6 +533,40 @@ public class OrdersService {
         row.put("idempotencyKey", rs.getString("idempotencyKey"));
         row.put("createdAt", rs.getTimestamp("createdAt").toLocalDateTime());
         return row;
+    }
+
+    /**
+     * FR21 — refund a captured payment through the provider. Failures never block the
+     * order transition: they are audited (refund_failed) for manual follow-up instead.
+     */
+    private String issueRefund(String orderId, String paymentIntentId, int totalCents) {
+        String refundId = payments.refund(paymentIntentId, totalCents);
+        if (refundId == null) {
+            db.sql("""
+                    INSERT INTO "AuditLog" (id, actor, entity, action, "after")
+                    VALUES (:id, 'payments', :entity, 'refund_failed', :after::jsonb)
+                    """)
+                    .param("id", UUID.randomUUID().toString())
+                    .param("entity", "Order:" + orderId)
+                    .param("after", jsonMapper.writeValueAsString(
+                            Map.of("paymentIntentId", paymentIntentId, "amountCents", totalCents)))
+                    .update();
+            return null;
+        }
+        db.sql("UPDATE \"Order\" SET \"refundId\" = :refundId, \"refundedAt\" = now() WHERE id = :id")
+                .param("refundId", refundId)
+                .param("id", orderId)
+                .update();
+        db.sql("""
+                INSERT INTO "AuditLog" (id, actor, entity, action, "after")
+                VALUES (:id, 'payments', :entity, 'payment_refunded', :after::jsonb)
+                """)
+                .param("id", UUID.randomUUID().toString())
+                .param("entity", "Order:" + orderId)
+                .param("after", jsonMapper.writeValueAsString(
+                        Map.of("refundId", refundId, "amountCents", totalCents)))
+                .update();
+        return refundId;
     }
 
     /** Accepts ISO datetimes with or without offset, mirroring JS `new Date(string)`. */

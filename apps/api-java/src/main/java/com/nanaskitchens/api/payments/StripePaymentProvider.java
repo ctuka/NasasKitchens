@@ -70,6 +70,21 @@ public class StripePaymentProvider implements PaymentProvider {
     }
 
     @Override
+    public String refund(String paymentIntentId, int amountCents) {
+        try {
+            com.stripe.model.Refund refund = client.refunds().create(
+                    com.stripe.param.RefundCreateParams.builder()
+                            .setPaymentIntent(paymentIntentId)
+                            .setAmount((long) amountCents)
+                            .build());
+            return refund.getId();
+        } catch (StripeException e) {
+            // Never blocks the decline/cancel — the caller audits it for manual follow-up.
+            return null;
+        }
+    }
+
+    @Override
     public String publishableKey() {
         return publishableKey;
     }

@@ -280,6 +280,9 @@ model Order {
   totalCents      Int
   commissionCents Int         @default(0)
   paymentIntentId String?
+  // FR21: set when a captured payment is automatically refunded on decline/cancel
+  refundId        String?
+  refundedAt      DateTime?
   idempotencyKey  String      @unique
   items           OrderItem[]
   deliveryJob     DeliveryJob?
