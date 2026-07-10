@@ -34,6 +34,12 @@ function cents(n: number) {
   return `$${(n / 100).toFixed(2)}`;
 }
 
+/** Assistant replies use **bold** markdown; render it instead of showing raw asterisks. */
+function renderRich(text: string) {
+  const parts = text.split(/\*\*([^*]+)\*\*/g);
+  return parts.map((part, i) => (i % 2 === 1 ? <strong key={i}>{part}</strong> : part));
+}
+
 export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -162,11 +168,17 @@ export default function ChatPage() {
     >
       <header
         style={{
+          position: "sticky",
+          top: 0,
+          zIndex: 10,
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
           padding: "18px 4px 14px",
           borderBottom: "1px solid var(--line)",
+          background: "var(--glass)",
+          backdropFilter: "blur(18px) saturate(160%)",
+          WebkitBackdropFilter: "blur(18px) saturate(160%)",
         }}
       >
         <Link href="/" style={{ fontWeight: 700, fontSize: 16, letterSpacing: "-0.02em" }}>
@@ -222,7 +234,7 @@ export default function ChatPage() {
             }}
           >
             <div className={`bubble ${m.role === "user" ? "bubble-user" : "bubble-assistant"}`}>
-              {m.content}
+              {renderRich(m.content)}
             </div>
           </div>
         ))}
@@ -243,19 +255,8 @@ export default function ChatPage() {
 
         {/* Order confirmation card (FR15) */}
         {pendingSummary && (
-          <div
-            role="dialog"
-            aria-labelledby="summary-heading"
-            className="fade-up"
-            style={{
-              border: "1px solid var(--line)",
-              borderRadius: "var(--radius)",
-              padding: 20,
-              margin: "14px 0",
-              background: "var(--surface)",
-              boxShadow: "var(--shadow)",
-            }}
-          >
+          <div role="dialog" aria-labelledby="summary-heading" className="fade-up shell" style={{ margin: "14px 0" }}>
+            <div className="shell-core" style={{ padding: 20 }}>
             <h2 id="summary-heading" style={{ margin: "0 0 4px", fontSize: 16, fontWeight: 700 }}>
               Order summary
             </h2>
@@ -301,6 +302,7 @@ export default function ChatPage() {
               <button onClick={() => setPendingSummary(null)} className="btn btn-ghost" style={{ padding: "9px 18px" }}>
                 Cancel
               </button>
+            </div>
             </div>
           </div>
         )}

@@ -19,8 +19,13 @@
   --bubble-assistant: #ffffff;
   --ring: rgba(176, 71, 36, 0.35);
   --shadow: 0 1px 2px rgba(21, 23, 28, 0.05), 0 8px 24px rgba(21, 23, 28, 0.06);
+  --shadow-soft: 0 2px 6px rgba(21, 23, 28, 0.04), 0 24px 64px -16px rgba(21, 23, 28, 0.12);
+  --shell-bg: rgba(21, 23, 28, 0.04);
+  --shell-ring: rgba(21, 23, 28, 0.06);
+  --glass: rgba(255, 255, 255, 0.72);
   --radius: 14px;
   --radius-sm: 10px;
+  --ease: cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -42,6 +47,10 @@
     --bubble-assistant: #24262c;
     --ring: rgba(208, 96, 58, 0.45);
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.35);
+    --shadow-soft: 0 2px 6px rgba(0, 0, 0, 0.25), 0 24px 64px -16px rgba(0, 0, 0, 0.5);
+    --shell-bg: rgba(255, 255, 255, 0.04);
+    --shell-ring: rgba(255, 255, 255, 0.08);
+    --glass: rgba(29, 31, 36, 0.72);
   }
 }
 
@@ -86,18 +95,71 @@ input {
   outline-offset: 2px;
 }
 
+/* ---------- Double-bezel shell: outer tray + inner core, concentric radii ---------- */
+
+.shell {
+  background: var(--shell-bg);
+  border: 1px solid var(--shell-ring);
+  border-radius: 26px;
+  padding: 7px;
+}
+
+.shell-core {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 19px;
+  box-shadow: var(--shadow-soft), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+/* ---------- Floating glass nav (fixed element only, per blur guardrails) ---------- */
+
+.island-nav {
+  position: sticky;
+  top: 14px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 10px 10px 10px 22px;
+  border-radius: 999px;
+  background: var(--glass);
+  border: 1px solid var(--shell-ring);
+  backdrop-filter: blur(18px) saturate(160%);
+  -webkit-backdrop-filter: blur(18px) saturate(160%);
+  box-shadow: var(--shadow-soft);
+}
+
 /* ---------- Buttons ---------- */
 
 .btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 10px;
   border: none;
   border-radius: 999px;
   font-weight: 600;
-  transition: background 0.18s ease, transform 0.12s ease, opacity 0.18s ease;
+  transition: background 0.35s var(--ease), transform 0.35s var(--ease), opacity 0.35s var(--ease);
   white-space: nowrap;
+}
+
+/* Button-in-button trailing arrow: nested circle, kinetic on hover */
+.btn-orb {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.16);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  line-height: 1;
+  transition: transform 0.35s var(--ease);
+}
+
+.btn:hover .btn-orb {
+  transform: translate(2px, -1px) scale(1.06);
 }
 
 .btn:active {
@@ -174,16 +236,24 @@ input {
 @keyframes fade-up {
   from {
     opacity: 0;
-    transform: translateY(10px);
+    transform: translateY(18px);
+    filter: blur(4px);
   }
   to {
     opacity: 1;
     transform: translateY(0);
+    filter: blur(0);
   }
 }
 
 .fade-up {
-  animation: fade-up 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: fade-up 0.8s var(--ease) both;
+}
+
+/* Staggered entrance: set --i per element */
+.stagger {
+  animation: fade-up 0.8s var(--ease) both;
+  animation-delay: calc(var(--i, 0) * 90ms);
 }
 
 @keyframes dot-pulse {
@@ -216,7 +286,8 @@ input {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .fade-up {
+  .fade-up,
+  .stagger {
     animation: none;
   }
   .typing-dot {
@@ -224,8 +295,10 @@ input {
     opacity: 0.6;
   }
   .btn,
+  .btn-orb,
   .input,
-  .chip {
+  .chip,
+  .kitchen-row {
     transition: none;
   }
 }
@@ -276,7 +349,14 @@ input {
   display: flex;
   align-items: center;
   gap: 16px;
-  padding: 18px 4px;
+  padding: 18px 20px;
+  border-radius: 14px;
+  transition: background 0.35s var(--ease), transform 0.35s var(--ease);
+}
+
+.kitchen-row:hover {
+  background: var(--surface-2);
+  transform: translateY(-1px);
 }
 
 .kitchen-row + .kitchen-row {

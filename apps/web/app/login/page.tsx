@@ -52,14 +52,16 @@ export default function LoginPage() {
         padding: "0 20px",
       }}
     >
-      <div className="fade-up" style={{ width: "100%", maxWidth: 380, marginTop: "16vh" }}>
-        <Link href="/" style={{ fontWeight: 700, fontSize: 17, letterSpacing: "-0.02em" }}>
+      <div className="fade-up" style={{ width: "100%", maxWidth: 420, marginTop: "13vh" }}>
+        <Link href="/" style={{ fontWeight: 700, fontSize: 17, letterSpacing: "-0.02em", paddingLeft: 8 }}>
           Nanas&rsquo; Kitchens
         </Link>
-        <h1 style={{ fontSize: 26, fontWeight: 700, letterSpacing: "-0.02em", margin: "28px 0 6px" }}>
+        <div className="shell" style={{ marginTop: 22 }}>
+        <div className="shell-core" style={{ padding: "30px 28px" }}>
+        <h1 style={{ fontSize: 25, fontWeight: 700, letterSpacing: "-0.02em", margin: "0 0 6px" }}>
           {mode === "login" ? "Welcome back" : "Create your account"}
         </h1>
-        <p style={{ color: "var(--text-2)", fontSize: 15, margin: "0 0 28px" }}>
+        <p style={{ color: "var(--text-2)", fontSize: 15, margin: "0 0 26px" }}>
           {mode === "login"
             ? "Sign in to keep ordering."
             : "A buyer account takes ten seconds."}
@@ -129,6 +131,8 @@ export default function LoginPage() {
             </>
           )}
         </button>
+        </div>
+        </div>
       </div>
     </main>
   );

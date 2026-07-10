@@ -58,10 +58,12 @@ public class KitchenOrderTools {
 
     @Tool(description = "Get the published daily menu for a kitchen.")
     public String getMenu(
-            @ToolParam(description = "The kitchen's UUID — the exact `id` field returned by searchKitchens, never the kitchen name")
+            @ToolParam(description = "The kitchen's UUID from searchKitchens results; the exact kitchen name also works")
                     String kitchenId,
             @ToolParam(required = false, description = "ISO date string (YYYY-MM-DD), defaults to today") String date) {
-        return guarded(() -> kitchens.publishedMenu(kitchenId, date));
+        // The chat UI only carries text across turns, so the model often has the kitchen NAME
+        // but not the UUID from an earlier turn. Resolve names to ids instead of failing.
+        return guarded(() -> kitchens.publishedMenu(kitchens.resolveKitchenId(kitchenId), date));
     }
 
     @Tool(description = "Check live remaining portions for a list of menu item IDs.")

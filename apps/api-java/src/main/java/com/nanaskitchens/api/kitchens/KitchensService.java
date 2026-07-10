@@ -85,6 +85,28 @@ public class KitchensService {
         return publicProfile(id);
     }
 
+    /**
+     * Chat-agent affordance: accepts either a kitchen UUID or a kitchen name (case-insensitive,
+     * partial ok) and returns the UUID. Tool calls arrive with names when the UUID from an
+     * earlier conversation turn is no longer in the model's context.
+     */
+    public String resolveKitchenId(String idOrName) {
+        if (idOrName == null) {
+            return null;
+        }
+        String v = idOrName.trim();
+        if (v.matches("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")) {
+            return v;
+        }
+        return db.sql("""
+                SELECT id FROM "Kitchen" WHERE name ILIKE :name ORDER BY LENGTH(name) ASC LIMIT 1
+                """)
+                .param("name", "%" + v + "%")
+                .query((rs, n) -> rs.getString("id"))
+                .optional()
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "KITCHEN_NOT_FOUND:" + v));
+    }
+
     /** FR5 + NFR2: PostGIS search within a 10-mile radius, ordered by distance. */
     public List<KitchenSearchResult> search(double lat, double lng, String cuisine) {
         double radiusMeters = SEARCH_RADIUS_MILES * METERS_PER_MILE;
