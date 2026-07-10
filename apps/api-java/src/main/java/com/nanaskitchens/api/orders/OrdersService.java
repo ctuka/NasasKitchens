@@ -1,6 +1,7 @@
 package com.nanaskitchens.api.orders;
 
 import com.nanaskitchens.api.delivery.DeliveryService;
+import com.nanaskitchens.api.delivery.GeocodingService;
 import com.nanaskitchens.api.inventory.InventoryService;
 import com.nanaskitchens.api.kitchens.AddressCrypto;
 import com.nanaskitchens.api.payments.PaymentsService;
@@ -35,22 +36,27 @@ public class OrdersService {
     private static final double COMMISSION_RATE = 0.15;
     private static final Set<String> FINAL_STATUSES = Set.of("completed", "cancelled");
 
+    private static final double DELIVERY_RADIUS_MILES = 10.0;
+    private static final double METERS_PER_MILE = 1609.344;
+
     private final JdbcClient db;
     private final InventoryService inventory;
     private final AddressCrypto addressCrypto;
     private final JsonMapper jsonMapper;
     private final PaymentsService payments;
     private final DeliveryService delivery;
+    private final GeocodingService geocoding;
 
     public OrdersService(
             JdbcClient db, InventoryService inventory, AddressCrypto addressCrypto, JsonMapper jsonMapper,
-            PaymentsService payments, DeliveryService delivery) {
+            PaymentsService payments, DeliveryService delivery, GeocodingService geocoding) {
         this.db = db;
         this.inventory = inventory;
         this.addressCrypto = addressCrypto;
         this.jsonMapper = jsonMapper;
         this.payments = payments;
         this.delivery = delivery;
+        this.geocoding = geocoding;
     }
 
     /**
@@ -102,6 +108,9 @@ public class OrdersService {
         if (isDelivery && deliveryAddress == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "ADDRESS_REQUIRED: delivery orders need deliveryAddress (street, city)");
+        }
+        if (isDelivery) {
+            checkDeliveryRadius(input.kitchenId(), deliveryAddress);
         }
 
         int totalCents = input.items().stream()
@@ -190,6 +199,35 @@ public class OrdersService {
                 .update();
 
         return Map.of("confirmed", true, "order", detail(buyerId, orderId));
+    }
+
+    /**
+     * FR5's 10-mile radius applies to delivery drop-offs too. The address is geocoded (dev:
+     * Nominatim) and measured against the kitchen's PostGIS point. Unresolvable addresses skip
+     * the check rather than block the order — geocoder coverage is patchy in some regions.
+     */
+    private void checkDeliveryRadius(String kitchenId, String deliveryAddress) {
+        GeocodingService.Point point = geocoding.geocode(deliveryAddress);
+        if (point == null) {
+            return;
+        }
+        Double meters = db.sql("""
+                SELECT ST_Distance(geo, ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography)
+                FROM "Kitchen" WHERE id = :kitchenId AND geo IS NOT NULL
+                """)
+                .param("lng", point.lng())
+                .param("lat", point.lat())
+                .param("kitchenId", kitchenId)
+                .query(Double.class)
+                .optional()
+                .orElse(null);
+        if (meters != null && meters > DELIVERY_RADIUS_MILES * METERS_PER_MILE) {
+            double miles = Math.round(meters / METERS_PER_MILE * 10) / 10.0;
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "ADDRESS_OUT_OF_RANGE: drop-off is " + miles
+                            + " miles from the kitchen; delivery is limited to "
+                            + (int) DELIVERY_RADIUS_MILES + " miles. Offer pickup or a closer address.");
+        }
     }
 
     /** FR10: step-by-step address disclosure — street address only on a confirmed pickup order. */
