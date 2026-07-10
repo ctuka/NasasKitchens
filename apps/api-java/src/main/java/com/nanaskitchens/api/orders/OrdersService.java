@@ -92,6 +92,18 @@ public class OrdersService {
             }
         }
 
+        // FR9/NFR5: delivery needs a drop-off address (validated up front so the agent can
+        // ask the buyer before any inventory or payment side effects happen).
+        boolean isDelivery = "delivery".equals(input.fulfillment());
+        String deliveryAddress =
+                input.deliveryAddress() == null || input.deliveryAddress().isBlank()
+                        ? null
+                        : input.deliveryAddress().trim();
+        if (isDelivery && deliveryAddress == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "ADDRESS_REQUIRED: delivery orders need deliveryAddress (street, city)");
+        }
+
         int totalCents = input.items().stream()
                 .mapToInt(it -> valid.get(it.menuItemId()).priceCents() * it.qty())
                 .sum();
@@ -108,6 +120,7 @@ public class OrdersService {
                         .toList(),
                 input.readySlot(),
                 input.fulfillment(),
+                isDelivery ? deliveryAddress : null,
                 totalCents);
 
         if (!input.confirm()) {
@@ -123,10 +136,10 @@ public class OrdersService {
         db.sql("""
                 INSERT INTO "Order"
                   (id, "buyerId", "kitchenId", "menuDayId", status, "readySlot", fulfillment,
-                   "totalCents", "commissionCents", "idempotencyKey")
+                   "totalCents", "commissionCents", "idempotencyKey", "deliveryAddressEncrypted")
                 VALUES
                   (:id, :buyerId, :kitchenId, :menuDayId, 'confirmed', :readySlot, :fulfillment,
-                   :totalCents, :commissionCents, :idempotencyKey)
+                   :totalCents, :commissionCents, :idempotencyKey, :deliveryAddressEncrypted)
                 """)
                 .param("id", orderId)
                 .param("buyerId", buyerId)
@@ -137,6 +150,8 @@ public class OrdersService {
                 .param("totalCents", totalCents)
                 .param("commissionCents", commissionCents)
                 .param("idempotencyKey", idempotencyKey)
+                .param("deliveryAddressEncrypted",
+                        deliveryAddress == null ? null : addressCrypto.encrypt(deliveryAddress))
                 .update();
         for (CreateOrderRequest.Item item : input.items()) {
             db.sql("""

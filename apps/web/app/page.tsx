@@ -30,6 +30,29 @@ function cap(s: string) {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
+// Dev photo mapping (real CC photos in /public/dishes) until sellers upload their own.
+const KITCHEN_PHOTOS: Record<string, string> = {
+  "Emine's Manti Evi": "/dishes/manti.jpg",
+  "Havva's Sarma Kosesi": "/dishes/sarma.jpg",
+  "Fatma's Sarma House": "/dishes/dolma.jpg",
+  "Ayse's Anatolian Kitchen": "/dishes/lentil.jpg",
+  "Zeynep's Gozleme House": "/dishes/gozleme.jpg",
+  "Abeba's Injera Kitchen": "/dishes/injera.jpg",
+  "Mei's Sichuan Home Cooking": "/dishes/mapo.jpg",
+  "Rosa's Cocina Oaxaquena": "/dishes/mole.jpg",
+};
+
+const CUISINE_PHOTOS: Record<string, string> = {
+  turkish: "/dishes/manti.jpg",
+  chinese: "/dishes/mapo.jpg",
+  mexican: "/dishes/mole.jpg",
+  ethiopian: "/dishes/injera.jpg",
+};
+
+function photoFor(k: KitchenResult) {
+  return KITCHEN_PHOTOS[k.name] ?? CUISINE_PHOTOS[k.cuisineTag] ?? "/dishes/dolma.jpg";
+}
+
 export default async function Home() {
   const kitchens = await getKitchens();
   const totalPortions = kitchens.reduce((sum, k) => sum + k.portionsLeftToday, 0);
@@ -92,9 +115,9 @@ export default async function Home() {
 
         {kitchens.length > 0 && (
           <div className="cascade stagger" style={{ "--i": 2 } as React.CSSProperties}>
-            {kitchens.slice(0, 3).map((k) => (
-              <div key={k.id} className="cascade-card">
-                <div className="monogram">{k.name.charAt(0)}</div>
+            {kitchens.slice(0, 3).map((k, i) => (
+              <div key={k.id} className={`cascade-card hue-${i % 5}`}>
+                <img src={photoFor(k)} alt="" className="cascade-photo" />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontWeight: 600, fontSize: 15, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                     {k.name}
@@ -140,20 +163,23 @@ export default async function Home() {
         </h2>
         {kitchens.length > 0 ? (
           <div className="kitchen-grid">
-            {kitchens.map((k) => (
-              <div key={k.id} className="kitchen-card">
-                <div className="monogram" style={{ width: 52, height: 52, fontSize: 20 }}>
-                  {k.name.charAt(0)}
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 600, fontSize: 16.5 }}>{k.name}</div>
-                  <div style={{ fontSize: 14, color: "var(--text-2)", marginTop: 3 }}>
-                    {cap(k.cuisineTag)} cuisine, {k.distanceMiles} mi away
+            {kitchens.map((k, i) => (
+              <div key={k.id} className={`kitchen-card hue-${i % 5}`}>
+                <img src={photoFor(k)} alt={`${k.name} dish`} className="kitchen-photo" />
+                <div className="kitchen-card-body">
+                  <div className="monogram" style={{ width: 44, height: 44, fontSize: 17 }}>
+                    {k.name.charAt(0)}
                   </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, fontSize: 16.5 }}>{k.name}</div>
+                    <div style={{ fontSize: 14, color: "var(--text-2)", marginTop: 3 }}>
+                      {cap(k.cuisineTag)} cuisine, {k.distanceMiles} mi away
+                    </div>
+                  </div>
+                  <span className="badge">
+                    {k.portionsLeftToday} portion{k.portionsLeftToday === 1 ? "" : "s"}
+                  </span>
                 </div>
-                <span className="badge">
-                  {k.portionsLeftToday} portion{k.portionsLeftToday === 1 ? "" : "s"}
-                </span>
               </div>
             ))}
           </div>

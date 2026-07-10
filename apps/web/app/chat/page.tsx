@@ -16,6 +16,7 @@ interface OrderSummary {
     totalCents: number;
     readySlot: string;
     fulfillment: string;
+    deliveryAddress?: string;
   };
   // raw draft stored so we can re-submit with confirm=true
   draft: Record<string, unknown>;
@@ -32,6 +33,69 @@ const SUGGESTIONS = [
 
 function cents(n: number) {
   return `$${(n / 100).toFixed(2)}`;
+}
+
+/** Geocodes the drop-off address (OpenStreetMap Nominatim) and embeds a marked map. */
+function AddressMap({ address }: { address: string }) {
+  const [coords, setCoords] = useState<{ lat: number; lon: number } | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    setCoords(null);
+    setFailed(false);
+    fetch(
+      `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(address)}`,
+      { headers: { accept: "application/json" } },
+    )
+      .then((r) => r.json())
+      .then((d) => {
+        if (!alive) return;
+        if (Array.isArray(d) && d[0]) setCoords({ lat: +d[0].lat, lon: +d[0].lon });
+        else setFailed(true);
+      })
+      .catch(() => alive && setFailed(true));
+    return () => {
+      alive = false;
+    };
+  }, [address]);
+
+  if (failed) {
+    return (
+      <p style={{ fontSize: 13.5, color: "var(--text-3)", margin: "8px 0 0" }}>
+        Map preview unavailable for this address.
+      </p>
+    );
+  }
+  if (!coords) {
+    return (
+      <div
+        style={{
+          height: 190,
+          borderRadius: 14,
+          background: "var(--surface-2)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          color: "var(--text-3)",
+          fontSize: 14,
+          marginTop: 12,
+        }}
+      >
+        Locating address on the map
+      </div>
+    );
+  }
+  const d = 0.004;
+  const bbox = `${coords.lon - d},${coords.lat - d},${coords.lon + d},${coords.lat + d}`;
+  return (
+    <iframe
+      title="Delivery drop-off location"
+      src={`https://www.openstreetmap.org/export/embed.html?bbox=${encodeURIComponent(bbox)}&layer=mapnik&marker=${coords.lat}%2C${coords.lon}`}
+      style={{ width: "100%", height: 190, border: "1px solid var(--line)", borderRadius: 14, marginTop: 12 }}
+      loading="lazy"
+    />
+  );
 }
 
 /** Inline markdown: [label](url) links and **bold**. No raw HTML ever reaches the DOM. */
@@ -158,7 +222,11 @@ export default function ChatPage() {
       if (summaryMatch) {
         try {
           const parsed = JSON.parse(summaryMatch[1]);
-          if (parsed.confirmed === false && parsed.summary) setPendingSummary(parsed);
+          if (parsed.confirmed === false && parsed.summary) {
+            setPendingSummary(parsed);
+            // The card renders the summary; don't also show the raw JSON in the bubble.
+            assistantText = assistantText.replace(summaryMatch[0], "").trim();
+          }
         } catch {}
       }
 
@@ -345,7 +413,18 @@ export default function ChatPage() {
               {", "}
               {pendingSummary.summary.fulfillment}
             </p>
-            <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
+            {pendingSummary.summary.deliveryAddress && (
+              <>
+                <p style={{ margin: "8px 0 0", fontSize: 14.5 }}>
+                  <strong>Deliver to:</strong> {pendingSummary.summary.deliveryAddress}
+                </p>
+                <AddressMap address={pendingSummary.summary.deliveryAddress} />
+              </>
+            )}
+            <p style={{ margin: "16px 0 0", fontSize: 15, fontWeight: 600 }}>
+              Do you confirm this order?
+            </p>
+            <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
               <button onClick={confirmOrder} className="btn btn-primary" style={{ padding: "10px 22px" }}>
                 Confirm order
               </button>

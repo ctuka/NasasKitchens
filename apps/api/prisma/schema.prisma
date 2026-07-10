@@ -133,6 +133,8 @@ model Order {
   commissionCents Int         @default(0)
   paymentIntentId String?
   idempotencyKey  String      @unique
+  // Buyer's drop-off address for delivery orders, encrypted like Kitchen.addressEncrypted (NFR5)
+  deliveryAddressEncrypted String?
   items           OrderItem[]
   deliveryJob     DeliveryJob?
   createdAt       DateTime    @default(now())

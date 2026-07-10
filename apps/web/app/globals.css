@@ -8,13 +8,19 @@
   --text: #15171c;
   --text-2: #5a6069;
   --text-3: #878e98;
-  --accent: #b04724;
+  /* Olympic palette: blue is the primary accent; the five ring colors cycle as
+     kitchen identity hues (see .hue-N below). */
+  --accent: #0081c8;
   /* Solid fill for buttons and user bubbles: stays deep in both themes so white text passes AA. */
-  --accent-strong: #b04724;
-  --accent-strong-hover: #993d1e;
-  --accent-hover: #993d1e;
-  --accent-soft: #f6e8e2;
+  --accent-strong: #006ba6;
+  --accent-strong-hover: #005a8c;
+  --accent-hover: #006ba6;
+  --accent-soft: #e3f1fa;
   --accent-on: #ffffff;
+  --ring-blue: #0081c8;
+  --ring-yellow: #fcb131;
+  --ring-green: #00a651;
+  --ring-red: #ee334e;
   --bubble-user: var(--accent-strong);
   --bubble-assistant: #ffffff;
   --ring: rgba(176, 71, 36, 0.35);
@@ -37,11 +43,11 @@
     --text: #ecedef;
     --text-2: #a4a9b1;
     --text-3: #6f747d;
-    --accent: #d0603a;
-    --accent-strong: #a8431f;
-    --accent-strong-hover: #b95030;
-    --accent-hover: #dd7350;
-    --accent-soft: #33221c;
+    --accent: #4aa8dc;
+    --accent-strong: #006ba6;
+    --accent-strong-hover: #0081c8;
+    --accent-hover: #6fbce6;
+    --accent-soft: #122a3a;
     --accent-on: #ffffff;
     --bubble-user: var(--accent-strong);
     --bubble-assistant: #24262c;
@@ -445,10 +451,52 @@ input {
   inset: -20% -10% auto;
   height: 70vh;
   background:
-    radial-gradient(42% 55% at 72% 30%, color-mix(in srgb, var(--accent) 14%, transparent), transparent 70%),
-    radial-gradient(30% 40% at 20% 10%, color-mix(in srgb, var(--accent) 7%, transparent), transparent 70%);
+    radial-gradient(42% 55% at 72% 30%, color-mix(in srgb, var(--ring-blue) 13%, transparent), transparent 70%),
+    radial-gradient(26% 36% at 24% 12%, color-mix(in srgb, var(--ring-yellow) 8%, transparent), transparent 70%),
+    radial-gradient(24% 34% at 50% 60%, color-mix(in srgb, var(--ring-green) 6%, transparent), transparent 70%),
+    radial-gradient(20% 30% at 88% 70%, color-mix(in srgb, var(--ring-red) 5%, transparent), transparent 70%);
   pointer-events: none;
   z-index: -1;
+}
+
+/* Olympic ring identity hues, cycled per kitchen (index % 5) */
+.hue-0 { --hue: var(--ring-blue); --hue-text: #006ba6; }
+.hue-1 { --hue: var(--ring-yellow); --hue-text: #8a5f00; }
+.hue-2 { --hue: var(--ring-green); --hue-text: #00753a; }
+.hue-3 { --hue: var(--ring-red); --hue-text: #cf1f3c; }
+.hue-4 { --hue: var(--text); --hue-text: var(--text); }
+
+@media (prefers-color-scheme: dark) {
+  .hue-0 { --hue-text: #55b1e2; }
+  .hue-1 { --hue-text: #fcc15e; }
+  .hue-2 { --hue-text: #3dbd7a; }
+  .hue-3 { --hue-text: #f4657c; }
+}
+
+.hue-0 .monogram, .hue-1 .monogram, .hue-2 .monogram, .hue-3 .monogram, .hue-4 .monogram {
+  background: color-mix(in srgb, var(--hue) 14%, transparent);
+  color: var(--hue-text);
+}
+
+.hue-0 .badge, .hue-1 .badge, .hue-2 .badge, .hue-3 .badge, .hue-4 .badge {
+  background: color-mix(in srgb, var(--hue) 13%, transparent);
+  color: var(--hue-text);
+}
+
+/* Photo header for kitchen cards */
+.kitchen-photo {
+  width: 100%;
+  height: 150px;
+  object-fit: cover;
+  display: block;
+}
+
+.cascade-photo {
+  width: 52px;
+  height: 52px;
+  border-radius: 14px;
+  object-fit: cover;
+  flex-shrink: 0;
 }
 
 .hero-em {
@@ -539,13 +587,10 @@ input {
 }
 
 .kitchen-card {
-  display: flex;
-  align-items: center;
-  gap: 16px;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 20px;
-  padding: 20px;
+  overflow: hidden;
   box-shadow: var(--shadow);
   transition: transform 0.45s var(--ease), box-shadow 0.45s var(--ease);
 }
@@ -553,6 +598,13 @@ input {
 .kitchen-card:hover {
   transform: translateY(-4px);
   box-shadow: var(--shadow-soft);
+}
+
+.kitchen-card-body {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 18px;
 }
 
 .hero-grid {
