@@ -44,6 +44,9 @@ public class SecurityConfig {
                         .permitAll()
                         .requestMatchers("/health", "/error", "/auth/register", "/auth/login", "/auth/refresh")
                         .permitAll()
+                        // Public courier tracking: exposes courier progress only, no buyer data.
+                        .requestMatchers(org.springframework.http.HttpMethod.GET, "/track/**")
+                        .permitAll()
                         // search / public profile / published menu are public, like the NestJS service
                         .requestMatchers(org.springframework.http.HttpMethod.GET, "/kitchens/**")
                         .permitAll()

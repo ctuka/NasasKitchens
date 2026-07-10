@@ -22,20 +22,23 @@ public class DeliveryService {
     private final JdbcClient db;
     private final String provider;
     private final int mockFeeCents;
+    private final String webUrl;
 
     public DeliveryService(
             JdbcClient db,
             @Value("${app.delivery.provider:mock}") String provider,
-            @Value("${app.delivery.mock-fee-cents:399}") int mockFeeCents) {
+            @Value("${app.delivery.mock-fee-cents:399}") int mockFeeCents,
+            @Value("${app.web-url:http://localhost:3000}") String webUrl) {
         this.db = db;
         this.provider = provider;
         this.mockFeeCents = mockFeeCents;
+        this.webUrl = webUrl;
     }
 
     /** Creates the DeliveryJob for a freshly confirmed delivery order (same transaction). */
     public Job createJob(String orderId) {
         String externalId = "mock-" + UUID.randomUUID().toString().substring(0, 8);
-        String trackingUrl = "https://track.nanaskitchens.example/" + externalId;
+        String trackingUrl = webUrl + "/track/" + externalId;
         db.sql("""
                 INSERT INTO "DeliveryJob" (id, "orderId", provider, "externalId", status, "trackingUrl", "feeCents")
                 VALUES (:id, :orderId, :provider, :externalId, 'courier_assigned', :trackingUrl, :feeCents)
