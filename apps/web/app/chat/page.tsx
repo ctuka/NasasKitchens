@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 
 interface Message {
   role: "user" | "assistant";
@@ -23,6 +24,12 @@ interface OrderSummary {
 // Java backend (apps/api-java); it proxies not-yet-ported endpoints to the legacy NestJS API.
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
 
+const SUGGESTIONS = [
+  "Find Turkish food near me",
+  "What's cooking in Lefkoşa today?",
+  "I want to order sarma",
+];
+
 function cents(n: number) {
   return `$${(n / 100).toFixed(2)}`;
 }
@@ -38,6 +45,12 @@ export default function ChatPage() {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  function signOut() {
+    localStorage.removeItem("access_token");
+    localStorage.removeItem("refresh_token");
+    window.location.href = "/login";
+  }
 
   async function send(text: string) {
     if (!text.trim() || streaming) return;
@@ -59,6 +72,15 @@ export default function ChatPage() {
         body: JSON.stringify({ messages: next }),
       });
 
+      if (res.status === 401 || res.status === 403) {
+        window.location.href = "/login";
+        return;
+      }
+      if (!res.ok) {
+        setMessages([...next, { role: "assistant", content: `Something went wrong (HTTP ${res.status}). Please try again.` }]);
+        return;
+      }
+
       const reader = res.body!.getReader();
       const decoder = new TextDecoder();
       let buf = "";
@@ -70,8 +92,9 @@ export default function ChatPage() {
         const lines = buf.split("\n");
         buf = lines.pop() ?? "";
         for (const line of lines) {
-          if (!line.startsWith("data: ")) continue;
-          const payload = JSON.parse(line.slice(6));
+          // NestJS wrote "data: {...}", Spring MVC writes "data:{...}" — accept both.
+          if (!line.startsWith("data:")) continue;
+          const payload = JSON.parse(line.slice(5).trim());
           if (payload.type === "text") addChunk(payload.delta);
           else if (payload.type === "done") break;
         }
@@ -87,6 +110,16 @@ export default function ChatPage() {
       }
 
       setMessages([...next, { role: "assistant", content: assistantText }]);
+    } catch {
+      setMessages([
+        ...next,
+        {
+          role: "assistant",
+          content: assistantText
+            ? assistantText + "\n\n[connection interrupted]"
+            : "Connection error. Please try again.",
+        },
+      ]);
     } finally {
       setStreaming(false);
     }
@@ -113,103 +146,159 @@ export default function ChatPage() {
     send(input);
   }
 
+  const lastMessage = messages[messages.length - 1];
+  const showTyping = streaming && (!lastMessage || lastMessage.role === "user" || !lastMessage.content);
+
   return (
-    <main style={{ display: "flex", flexDirection: "column", height: "100dvh", maxWidth: 680, margin: "0 auto" }}>
-      <header style={{ padding: "12px 16px", borderBottom: "1px solid #e5e7eb", fontWeight: 700, fontSize: 18 }}>
-        Nanas' Kitchens — Order Assistant
+    <main
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        height: "100dvh",
+        maxWidth: 720,
+        margin: "0 auto",
+        padding: "0 16px",
+      }}
+    >
+      <header
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          padding: "18px 4px 14px",
+          borderBottom: "1px solid var(--line)",
+        }}
+      >
+        <Link href="/" style={{ fontWeight: 700, fontSize: 16, letterSpacing: "-0.02em" }}>
+          Nanas&rsquo; Kitchens
+        </Link>
+        <button
+          onClick={signOut}
+          style={{
+            background: "transparent",
+            border: "none",
+            color: "var(--text-2)",
+            fontSize: 14,
+            padding: "4px 2px",
+          }}
+        >
+          Sign out
+        </button>
       </header>
 
-      <div role="log" aria-live="polite" style={{ flex: 1, overflowY: "auto", padding: "16px" }}>
+      <div role="log" aria-live="polite" style={{ flex: 1, overflowY: "auto", padding: "24px 2px" }}>
         {messages.length === 0 && (
-          <p style={{ color: "#6b7280", textAlign: "center", marginTop: 40 }}>
-            Ask me to find food near you, browse a menu, or place an order.
-          </p>
+          <div className="fade-up" style={{ textAlign: "center", marginTop: "14vh" }}>
+            <div
+              className="monogram"
+              style={{ width: 56, height: 56, borderRadius: 16, fontSize: 22, margin: "0 auto 20px" }}
+            >
+              N
+            </div>
+            <h1 style={{ fontSize: 24, fontWeight: 700, letterSpacing: "-0.02em", margin: "0 0 8px" }}>
+              What are you craving?
+            </h1>
+            <p style={{ color: "var(--text-2)", fontSize: 15, margin: "0 0 28px" }}>
+              Find kitchens, browse menus, and order in one conversation.
+            </p>
+            <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
+              {SUGGESTIONS.map((s) => (
+                <button key={s} className="chip" onClick={() => send(s)}>
+                  {s}
+                </button>
+              ))}
+            </div>
+          </div>
         )}
+
         {messages.map((m, i) => (
           <div
             key={i}
+            className="fade-up"
             style={{
-              marginBottom: 12,
+              marginBottom: 14,
               display: "flex",
               justifyContent: m.role === "user" ? "flex-end" : "flex-start",
             }}
           >
-            <div
-              style={{
-                maxWidth: "80%",
-                padding: "10px 14px",
-                borderRadius: 16,
-                background: m.role === "user" ? "#2563eb" : "#f3f4f6",
-                color: m.role === "user" ? "#fff" : "#111",
-                whiteSpace: "pre-wrap",
-                fontSize: 15,
-              }}
-            >
+            <div className={`bubble ${m.role === "user" ? "bubble-user" : "bubble-assistant"}`}>
               {m.content}
             </div>
           </div>
         ))}
+
+        {showTyping && (
+          <div className="fade-up" style={{ display: "flex", justifyContent: "flex-start", marginBottom: 14 }}>
+            <div
+              className="bubble bubble-assistant"
+              style={{ display: "flex", gap: 5, alignItems: "center", padding: "14px 18px" }}
+              aria-label="Assistant is typing"
+            >
+              <span className="typing-dot" />
+              <span className="typing-dot" />
+              <span className="typing-dot" />
+            </div>
+          </div>
+        )}
 
         {/* Order confirmation card (FR15) */}
         {pendingSummary && (
           <div
             role="dialog"
             aria-labelledby="summary-heading"
+            className="fade-up"
             style={{
-              border: "2px solid #2563eb",
-              borderRadius: 12,
-              padding: 16,
-              margin: "12px 0",
-              background: "#eff6ff",
+              border: "1px solid var(--line)",
+              borderRadius: "var(--radius)",
+              padding: 20,
+              margin: "14px 0",
+              background: "var(--surface)",
+              boxShadow: "var(--shadow)",
             }}
           >
-            <h2 id="summary-heading" style={{ margin: "0 0 8px", fontSize: 16 }}>
-              Order Summary — please confirm
+            <h2 id="summary-heading" style={{ margin: "0 0 4px", fontSize: 16, fontWeight: 700 }}>
+              Order summary
             </h2>
             {pendingSummary.summary.kitchenName && (
-              <p style={{ margin: "0 0 4px", fontWeight: 600 }}>{pendingSummary.summary.kitchenName}</p>
+              <p style={{ margin: "0 0 12px", color: "var(--text-2)", fontSize: 14 }}>
+                {pendingSummary.summary.kitchenName}
+              </p>
             )}
-            <ul style={{ margin: "8px 0", paddingLeft: 20 }}>
+            <div style={{ borderTop: "1px solid var(--line)", padding: "12px 0", margin: "8px 0" }}>
               {pendingSummary.summary.items.map((it, i) => (
-                <li key={i}>
-                  {it.qty}× {it.name} — {cents(it.priceCents * it.qty)}
-                </li>
+                <div
+                  key={i}
+                  style={{ display: "flex", justifyContent: "space-between", fontSize: 15, padding: "4px 0" }}
+                >
+                  <span>
+                    {it.qty} &times; {it.name}
+                  </span>
+                  <span style={{ fontWeight: 600 }}>{cents(it.priceCents * it.qty)}</span>
+                </div>
               ))}
-            </ul>
-            <p style={{ margin: "4px 0" }}>
-              <strong>Total:</strong> {cents(pendingSummary.summary.totalCents)}
+            </div>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                fontSize: 15,
+                fontWeight: 700,
+                padding: "4px 0 2px",
+              }}
+            >
+              <span>Total</span>
+              <span>{cents(pendingSummary.summary.totalCents)}</span>
+            </div>
+            <p style={{ margin: "10px 0 2px", fontSize: 14, color: "var(--text-2)" }}>
+              Ready {new Date(pendingSummary.summary.readySlot).toLocaleString()}
+              {", "}
+              {pendingSummary.summary.fulfillment}
             </p>
-            <p style={{ margin: "4px 0" }}>
-              <strong>Ready:</strong> {new Date(pendingSummary.summary.readySlot).toLocaleString()}
-            </p>
-            <p style={{ margin: "4px 0 12px" }}>
-              <strong>Fulfillment:</strong> {pendingSummary.summary.fulfillment}
-            </p>
-            <div style={{ display: "flex", gap: 8 }}>
-              <button
-                onClick={confirmOrder}
-                style={{
-                  background: "#2563eb",
-                  color: "#fff",
-                  border: "none",
-                  borderRadius: 8,
-                  padding: "8px 20px",
-                  cursor: "pointer",
-                  fontWeight: 600,
-                }}
-              >
+            <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
+              <button onClick={confirmOrder} className="btn btn-primary" style={{ padding: "10px 22px" }}>
                 Confirm order
               </button>
-              <button
-                onClick={() => setPendingSummary(null)}
-                style={{
-                  background: "transparent",
-                  border: "1px solid #6b7280",
-                  borderRadius: 8,
-                  padding: "8px 16px",
-                  cursor: "pointer",
-                }}
-              >
+              <button onClick={() => setPendingSummary(null)} className="btn btn-ghost" style={{ padding: "9px 18px" }}>
                 Cancel
               </button>
             </div>
@@ -219,39 +308,22 @@ export default function ChatPage() {
         <div ref={bottomRef} />
       </div>
 
-      <form
-        onSubmit={onSubmit}
-        style={{ padding: "12px 16px", borderTop: "1px solid #e5e7eb", display: "flex", gap: 8 }}
-      >
+      <form onSubmit={onSubmit} style={{ display: "flex", gap: 10, padding: "12px 0 18px" }}>
         <input
           aria-label="Message"
+          className="input"
           value={input}
           onChange={(e) => setInput(e.target.value)}
           disabled={streaming}
-          placeholder={streaming ? "Assistant is typing…" : "Type a message…"}
-          style={{
-            flex: 1,
-            padding: "10px 14px",
-            borderRadius: 24,
-            border: "1px solid #d1d5db",
-            fontSize: 15,
-            outline: "none",
-          }}
+          placeholder={streaming ? "Assistant is typing" : "Ask for a dish, a cuisine, or a kitchen"}
+          style={{ borderRadius: 999, padding: "13px 20px" }}
         />
         <button
           type="submit"
           disabled={streaming || !input.trim()}
           aria-label="Send"
-          style={{
-            background: "#2563eb",
-            color: "#fff",
-            border: "none",
-            borderRadius: 24,
-            padding: "10px 20px",
-            cursor: "pointer",
-            fontWeight: 600,
-            opacity: streaming || !input.trim() ? 0.5 : 1,
-          }}
+          className="btn btn-primary"
+          style={{ padding: "12px 24px" }}
         >
           Send
         </button>

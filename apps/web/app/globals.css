@@ -1,0 +1,308 @@
+/* Nanas' Kitchens design tokens — Terracotta + Slate, dual theme. */
+
+:root {
+  --bg: #f4f5f7;
+  --surface: #ffffff;
+  --surface-2: #eceef1;
+  --line: #dfe2e7;
+  --text: #15171c;
+  --text-2: #5a6069;
+  --text-3: #878e98;
+  --accent: #b04724;
+  /* Solid fill for buttons and user bubbles: stays deep in both themes so white text passes AA. */
+  --accent-strong: #b04724;
+  --accent-strong-hover: #993d1e;
+  --accent-hover: #993d1e;
+  --accent-soft: #f6e8e2;
+  --accent-on: #ffffff;
+  --bubble-user: var(--accent-strong);
+  --bubble-assistant: #ffffff;
+  --ring: rgba(176, 71, 36, 0.35);
+  --shadow: 0 1px 2px rgba(21, 23, 28, 0.05), 0 8px 24px rgba(21, 23, 28, 0.06);
+  --radius: 14px;
+  --radius-sm: 10px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #141519;
+    --surface: #1d1f24;
+    --surface-2: #24262c;
+    --line: #2e3138;
+    --text: #ecedef;
+    --text-2: #a4a9b1;
+    --text-3: #6f747d;
+    --accent: #d0603a;
+    --accent-strong: #a8431f;
+    --accent-strong-hover: #b95030;
+    --accent-hover: #dd7350;
+    --accent-soft: #33221c;
+    --accent-on: #ffffff;
+    --bubble-user: var(--accent-strong);
+    --bubble-assistant: #24262c;
+    --ring: rgba(208, 96, 58, 0.45);
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.35);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+}
+
+input {
+  font: inherit;
+}
+
+::selection {
+  background: var(--accent);
+  color: var(--accent-on);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ---------- Buttons ---------- */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: none;
+  border-radius: 999px;
+  font-weight: 600;
+  transition: background 0.18s ease, transform 0.12s ease, opacity 0.18s ease;
+  white-space: nowrap;
+}
+
+.btn:active {
+  transform: scale(0.98);
+}
+
+.btn-primary {
+  background: var(--accent-strong);
+  color: var(--accent-on);
+  padding: 12px 26px;
+  font-size: 15px;
+}
+
+.btn-primary:hover {
+  background: var(--accent-strong-hover);
+}
+
+.btn-primary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--line);
+  padding: 11px 22px;
+  font-size: 15px;
+}
+
+.btn-ghost:hover {
+  border-color: var(--text-3);
+  background: var(--surface);
+}
+
+/* ---------- Forms ---------- */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.field label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.input {
+  width: 100%;
+  padding: 12px 15px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 15px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.input::placeholder {
+  color: var(--text-3);
+}
+
+.input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--ring);
+}
+
+/* ---------- Motion ---------- */
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.fade-up {
+  animation: fade-up 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes dot-pulse {
+  0%,
+  80%,
+  100% {
+    opacity: 0.25;
+    transform: translateY(0);
+  }
+  40% {
+    opacity: 1;
+    transform: translateY(-3px);
+  }
+}
+
+.typing-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-3);
+  animation: dot-pulse 1.2s infinite ease-in-out;
+}
+
+.typing-dot:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.typing-dot:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fade-up {
+    animation: none;
+  }
+  .typing-dot {
+    animation: none;
+    opacity: 0.6;
+  }
+  .btn,
+  .input,
+  .chip {
+    transition: none;
+  }
+}
+
+/* ---------- Chat ---------- */
+
+.chip {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text-2);
+  border-radius: 999px;
+  padding: 9px 16px;
+  font-size: 14px;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+
+.chip:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.bubble {
+  max-width: 78%;
+  padding: 11px 16px;
+  font-size: 15px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.bubble-user {
+  background: var(--bubble-user);
+  color: #fff;
+  border-radius: 18px 18px 4px 18px;
+}
+
+.bubble-assistant {
+  background: var(--bubble-assistant);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 18px 18px 18px 4px;
+}
+
+/* ---------- Kitchen rows (home) ---------- */
+
+.kitchen-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 18px 4px;
+}
+
+.kitchen-row + .kitchen-row {
+  border-top: 1px solid var(--line);
+}
+
+.monogram {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 17px;
+  flex-shrink: 0;
+}
+
+.badge {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 999px;
+  padding: 5px 12px;
+  white-space: nowrap;
+}
