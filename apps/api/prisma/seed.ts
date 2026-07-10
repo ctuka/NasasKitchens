@@ -68,6 +68,33 @@ const KITCHENS = [
       { name: "Kolokas Dolması", description: "Kıbrıs usulü kolokas dolması", priceCents: 1250, dietaryTags: [], portions: 8 },
     ],
   },
+  // Columbus, Ohio cluster — for remote testers in the US Midwest.
+  {
+    seller: { email: "zeynep@demo.com" },
+    name: "Zeynep's Gozleme House",
+    cuisineTag: "turkish",
+    description: "Fresh gozleme off the sac, koftes and daily Turkish home plates.",
+    address: "1120 N High St, Columbus, OH",
+    lat: 39.9852, lng: -83.0007, // Short North
+    dishes: [
+      { name: "Gozleme (spinach & feta)", description: "Hand-rolled flatbread off the griddle, 2 pieces", priceCents: 1050, dietaryTags: ["vegetarian"], portions: 12 },
+      { name: "Izgara Kofte Plate", description: "Grilled beef koftes, bulgur pilaf, shepherd salad", priceCents: 1550, dietaryTags: [], portions: 10 },
+      { name: "Kabak Mucveri", description: "Zucchini fritters with garlic yogurt (4 pc)", priceCents: 900, dietaryTags: ["vegetarian"], portions: 8 },
+    ],
+  },
+  {
+    seller: { email: "abeba@demo.com" },
+    name: "Abeba's Injera Kitchen",
+    cuisineTag: "ethiopian",
+    description: "Slow-simmered wots on fresh injera, Addis home style.",
+    address: "3411 Cleveland Ave, Columbus, OH",
+    lat: 40.0392, lng: -82.9701, // ~4.5 mi from Short North
+    dishes: [
+      { name: "Doro Wot", description: "Chicken stewed in berbere with a boiled egg, on injera", priceCents: 1600, dietaryTags: [], portions: 9 },
+      { name: "Misir Wot", description: "Red lentils in spiced berbere sauce, with injera", priceCents: 1200, dietaryTags: ["vegetarian", "vegan"], portions: 14 },
+      { name: "Veggie Combo", description: "Five vegetable wots arranged on fresh injera", priceCents: 1450, dietaryTags: ["vegetarian", "vegan"], portions: 10 },
+    ],
+  },
   {
     seller: { email: "mei@demo.com" },
     name: "Mei's Sichuan Home Cooking",
