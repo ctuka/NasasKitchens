@@ -25,13 +25,41 @@ spring:
       # Prisma tables/columns are quoted camelCase ("User"."passwordHash"); quote everything.
       hibernate.globally_quoted_identifiers: true
   ai:
+    # Both starters are on the classpath; this picks which ChatModel autoconfigures.
+    # Dev default is Gemini (free tier); set AI_PROVIDER=anthropic for the full version.
+    model:
+      chat: ${AI_PROVIDER:google-genai}
+    # Free-tier RPM cap: the agentic tool loop makes several model calls per user message,
+    # so 429s are expected in bursts. Back off and retry instead of failing the request.
+    retry:
+      max-attempts: 4
+      on-http-codes: [429, 503]
+      backoff:
+        initial-interval: 3s
+        multiplier: 2
     anthropic:
       api-key: ${ANTHROPIC_API_KEY:}
       chat:
         options:
           model: claude-opus-4-8
+    google:
+      genai:
+        api-key: ${GEMINI_API_KEY:}
+        chat:
+          options:
+            # "-latest" aliases track current models, so retired ids (e.g.
+            # gemini-2.5-flash, gone 2026-07) don't 404 the chat agent. Lite tier
+            # because the free-tier flash alias frequently 503s under load.
+            model: ${GEMINI_MODEL:gemini-flash-lite-latest}
 
 app:
+  stripe:
+    # Test-mode key (sk_test_...). Empty = payments skipped (orders confirm without charge).
+    secret-key: ${STRIPE_SECRET_KEY:}
+  delivery:
+    # mock = fake courier for dev (Story 4.2 swaps in doordash when Drive credentials exist).
+    provider: ${DELIVERY_PROVIDER:mock}
+    mock-fee-cents: 399
   jwt:
     # Shared with the NestJS service's JWT_SECRET so access tokens are valid on both
     # backends during the migration. Must be >= 32 bytes (HS256 key requirement).

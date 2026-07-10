@@ -94,13 +94,16 @@ public class KitchensService {
                        COALESCE((
                          SELECT SUM(mi."portionsRemaining") FROM "MenuItem" mi
                          JOIN "MenuDay" md ON md.id = mi."menuDayId"
-                         WHERE md."kitchenId" = k.id AND md.status = 'published' AND md.date = CURRENT_DATE
+                         -- UTC date, not CURRENT_DATE: the JDBC session runs in the JVM's local
+                         -- timezone, and menu days are stored as UTC dates (Prisma/NestJS convention).
+                         WHERE md."kitchenId" = k.id AND md.status = 'published'
+                           AND md.date = (now() AT TIME ZONE 'UTC')::date
                        ), 0)::int AS portions_left
                 FROM "Kitchen" k
                 WHERE k."complianceAttestedAt" IS NOT NULL
                   AND k.geo IS NOT NULL
                   AND ST_DWithin(k.geo, ST_SetSRID(ST_MakePoint(:lng, :lat),4326)::geography, :radius)
-                  AND (:cuisine::text IS NULL OR k."cuisineTag" = :cuisine)
+                  AND (:cuisine::text IS NULL OR k."cuisineTag" = LOWER(:cuisine))
                 ORDER BY meters ASC
                 LIMIT 50
                 """)
