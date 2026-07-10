@@ -175,12 +175,26 @@ export default function ChatPage() {
   const [pendingSummary, setPendingSummary] = useState<OrderSummary | null>(null);
   const [pendingMenu, setPendingMenu] = useState<MenuCard | null>(null);
   const [picked, setPicked] = useState<Record<string, number>>({});
+  const [queued, setQueued] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const token = typeof window !== "undefined" ? localStorage.getItem("access_token") ?? "" : "";
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  // When the assistant finishes: send anything the user typed meanwhile, keep focus in the box.
+  useEffect(() => {
+    if (streaming) return;
+    inputRef.current?.focus();
+    if (queued) {
+      const text = queued;
+      setQueued(null);
+      send(text);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [streaming]);
 
   function signOut() {
     localStorage.removeItem("access_token");
@@ -310,6 +324,13 @@ export default function ChatPage() {
 
   function onSubmit(e: FormEvent) {
     e.preventDefault();
+    if (!input.trim()) return;
+    if (streaming) {
+      // Queue it; the effect above fires it as soon as the assistant finishes.
+      setQueued(input.trim());
+      setInput("");
+      return;
+    }
     send(input);
   }
 
@@ -607,23 +628,34 @@ export default function ChatPage() {
         <div ref={bottomRef} />
       </div>
 
-      <form onSubmit={onSubmit} className="chat-dock" style={{ marginBottom: 14 }}>
-        <input
-          aria-label="Message"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          disabled={streaming}
-          placeholder={streaming ? "Assistant is typing" : "Ask for a dish, a cuisine, or a kitchen"}
-        />
-        <button
-          type="submit"
-          disabled={streaming || !input.trim()}
-          aria-label="Send"
-          className="send-orb"
-        >
-          &#8599;
-        </button>
-      </form>
+      <div style={{ marginTop: "auto" }}>
+        {queued && (
+          <p
+            aria-live="polite"
+            style={{
+              fontSize: 13,
+              color: "var(--text-3)",
+              margin: "0 0 6px",
+              paddingLeft: 22,
+            }}
+          >
+            Will send when the assistant finishes: &ldquo;{queued}&rdquo;
+          </p>
+        )}
+        <form onSubmit={onSubmit} className="chat-dock" style={{ marginBottom: 14 }}>
+          <input
+            ref={inputRef}
+            aria-label="Message"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            autoFocus
+            placeholder="Ask for a dish, a cuisine, or a kitchen"
+          />
+          <button type="submit" disabled={!input.trim()} aria-label="Send" className="send-orb">
+            &#8599;
+          </button>
+        </form>
+      </div>
     </main>
   );
 }
