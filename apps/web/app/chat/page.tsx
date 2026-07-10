@@ -207,39 +207,23 @@ export default function ChatPage() {
       style={{
         display: "flex",
         flexDirection: "column",
-        height: "100dvh",
-        maxWidth: 720,
+        minHeight: "100dvh",
+        maxWidth: 760,
         margin: "0 auto",
-        padding: "0 16px",
+        padding: "14px 16px 0",
+        position: "relative",
       }}
     >
-      <header
-        style={{
-          position: "sticky",
-          top: 0,
-          zIndex: 10,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          padding: "18px 4px 14px",
-          borderBottom: "1px solid var(--line)",
-          background: "var(--glass)",
-          backdropFilter: "blur(18px) saturate(160%)",
-          WebkitBackdropFilter: "blur(18px) saturate(160%)",
-        }}
-      >
+      <div className="hero-glow" aria-hidden="true" style={{ opacity: 0.6 }} />
+
+      <header className="island-nav" style={{ maxWidth: 480, margin: "0 auto", width: "100%" }}>
         <Link href="/" style={{ fontWeight: 700, fontSize: 16, letterSpacing: "-0.02em" }}>
           Nanas&rsquo; Kitchens
         </Link>
         <button
           onClick={signOut}
-          style={{
-            background: "transparent",
-            border: "none",
-            color: "var(--text-2)",
-            fontSize: 14,
-            padding: "4px 2px",
-          }}
+          className="btn btn-ghost"
+          style={{ padding: "7px 16px", fontSize: 13.5 }}
         >
           Sign out
         </button>
@@ -247,22 +231,38 @@ export default function ChatPage() {
 
       <div role="log" aria-live="polite" style={{ flex: 1, overflowY: "auto", padding: "24px 2px" }}>
         {messages.length === 0 && (
-          <div className="fade-up" style={{ textAlign: "center", marginTop: "14vh" }}>
-            <div
-              className="monogram"
-              style={{ width: 56, height: 56, borderRadius: 16, fontSize: 22, margin: "0 auto 20px" }}
-            >
+          <div style={{ textAlign: "center", marginTop: "13vh" }}>
+            <div className="halo-orb stagger" style={{ "--i": 0 } as React.CSSProperties}>
               N
             </div>
-            <h1 style={{ fontSize: 24, fontWeight: 700, letterSpacing: "-0.02em", margin: "0 0 8px" }}>
-              What are you craving?
+            <h1
+              className="stagger"
+              style={
+                {
+                  "--i": 1,
+                  fontSize: "clamp(26px, 4vw, 34px)",
+                  fontWeight: 700,
+                  letterSpacing: "-0.03em",
+                  margin: "0 0 10px",
+                } as React.CSSProperties
+              }
+            >
+              What are you <span className="hero-em">craving</span> today?
             </h1>
-            <p style={{ color: "var(--text-2)", fontSize: 15, margin: "0 0 28px" }}>
+            <p
+              className="stagger"
+              style={{ "--i": 2, color: "var(--text-2)", fontSize: 15.5, margin: "0 0 32px" } as React.CSSProperties}
+            >
               Find kitchens, browse menus, and order in one conversation.
             </p>
             <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
-              {SUGGESTIONS.map((s) => (
-                <button key={s} className="chip" onClick={() => send(s)}>
+              {SUGGESTIONS.map((s, i) => (
+                <button
+                  key={s}
+                  className="chip stagger"
+                  style={{ "--i": 3 + i } as React.CSSProperties}
+                  onClick={() => send(s)}
+                >
                   {s}
                 </button>
               ))}
@@ -275,11 +275,13 @@ export default function ChatPage() {
             key={i}
             className="fade-up"
             style={{
-              marginBottom: 14,
+              marginBottom: 16,
               display: "flex",
+              gap: 10,
               justifyContent: m.role === "user" ? "flex-end" : "flex-start",
             }}
           >
+            {m.role === "assistant" && <div className="avatar-orb">N</div>}
             <div className={`bubble ${m.role === "user" ? "bubble-user" : "bubble-assistant"}`}>
               {renderRich(m.content)}
             </div>
@@ -287,10 +289,11 @@ export default function ChatPage() {
         ))}
 
         {showTyping && (
-          <div className="fade-up" style={{ display: "flex", justifyContent: "flex-start", marginBottom: 14 }}>
+          <div className="fade-up" style={{ display: "flex", gap: 10, justifyContent: "flex-start", marginBottom: 16 }}>
+            <div className="avatar-orb">N</div>
             <div
               className="bubble bubble-assistant"
-              style={{ display: "flex", gap: 5, alignItems: "center", padding: "14px 18px" }}
+              style={{ display: "flex", gap: 5, alignItems: "center", padding: "15px 18px" }}
               aria-label="Assistant is typing"
             >
               <span className="typing-dot" />
@@ -357,24 +360,21 @@ export default function ChatPage() {
         <div ref={bottomRef} />
       </div>
 
-      <form onSubmit={onSubmit} style={{ display: "flex", gap: 10, padding: "12px 0 18px" }}>
+      <form onSubmit={onSubmit} className="chat-dock" style={{ marginBottom: 14 }}>
         <input
           aria-label="Message"
-          className="input"
           value={input}
           onChange={(e) => setInput(e.target.value)}
           disabled={streaming}
           placeholder={streaming ? "Assistant is typing" : "Ask for a dish, a cuisine, or a kitchen"}
-          style={{ borderRadius: 999, padding: "13px 20px" }}
         />
         <button
           type="submit"
           disabled={streaming || !input.trim()}
           aria-label="Send"
-          className="btn btn-primary"
-          style={{ padding: "12px 24px" }}
+          className="send-orb"
         >
-          Send
+          &#8599;
         </button>
       </form>
     </main>

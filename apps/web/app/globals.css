@@ -305,6 +305,98 @@ input {
 
 /* ---------- Chat ---------- */
 
+/* Assistant identity orb next to assistant bubbles */
+.avatar-orb {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 13px;
+  flex-shrink: 0;
+  margin-top: 4px;
+}
+
+/* Floating glass input dock, detached from the bottom edge */
+.chat-dock {
+  position: sticky;
+  bottom: 14px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 7px 7px 22px;
+  border-radius: 999px;
+  background: var(--glass);
+  border: 1px solid var(--shell-ring);
+  backdrop-filter: blur(18px) saturate(160%);
+  -webkit-backdrop-filter: blur(18px) saturate(160%);
+  box-shadow: var(--shadow-soft);
+}
+
+.chat-dock input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 15px;
+  outline: none;
+  min-width: 0;
+}
+
+.chat-dock input::placeholder {
+  color: var(--text-3);
+}
+
+.send-orb {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: none;
+  background: var(--accent-strong);
+  color: var(--accent-on);
+  font-size: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.35s var(--ease), transform 0.35s var(--ease), opacity 0.35s var(--ease);
+}
+
+.send-orb:hover:not(:disabled) {
+  background: var(--accent-strong-hover);
+  transform: translateY(-1px);
+}
+
+.send-orb:active:not(:disabled) {
+  transform: scale(0.94);
+}
+
+.send-orb:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* Empty-state monogram with a soft halo */
+.halo-orb {
+  width: 64px;
+  height: 64px;
+  border-radius: 20px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 26px;
+  margin: 0 auto 22px;
+  box-shadow: 0 0 0 10px color-mix(in srgb, var(--accent) 5%, transparent),
+    0 0 0 22px color-mix(in srgb, var(--accent) 2%, transparent);
+}
+
 .chip {
   border: 1px solid var(--line);
   background: var(--surface);
@@ -322,10 +414,10 @@ input {
 }
 
 .bubble {
-  max-width: 78%;
-  padding: 11px 16px;
+  max-width: 76%;
+  padding: 12px 17px;
   font-size: 15px;
-  line-height: 1.55;
+  line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -333,14 +425,17 @@ input {
 .bubble-user {
   background: var(--bubble-user);
   color: #fff;
-  border-radius: 18px 18px 4px 18px;
+  border-radius: 20px 20px 6px 20px;
+  box-shadow: 0 6px 18px -8px color-mix(in srgb, var(--accent-strong) 55%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18);
 }
 
 .bubble-assistant {
   background: var(--bubble-assistant);
   color: var(--text);
   border: 1px solid var(--line);
-  border-radius: 18px 18px 18px 4px;
+  border-radius: 20px 20px 20px 6px;
+  box-shadow: var(--shadow);
 }
 
 /* ---------- Hero (home) ---------- */
