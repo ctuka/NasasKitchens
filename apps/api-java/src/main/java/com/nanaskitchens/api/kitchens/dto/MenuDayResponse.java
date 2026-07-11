@@ -28,6 +28,7 @@ public record MenuDayResponse(
             String name,
             String description,
             String photo,
+            Integer calories,
             int priceCents,
             List<String> dietaryTags) {
     }

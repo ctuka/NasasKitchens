@@ -111,6 +111,21 @@ public class OrdersService {
             }
         }
 
+        // FR9/NFR5: delivery needs a drop-off address (validated up front so the agent can
+        // ask the buyer before any inventory or payment side effects happen).
+        boolean isDelivery = "delivery".equals(input.fulfillment());
+        String deliveryAddress =
+                input.deliveryAddress() == null || input.deliveryAddress().isBlank()
+                        ? null
+                        : input.deliveryAddress().trim();
+        if (isDelivery && deliveryAddress == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "ADDRESS_REQUIRED: delivery orders need deliveryAddress (street, city)");
+        }
+        if (isDelivery) {
+            checkDeliveryRadius(input.kitchenId(), deliveryAddress);
+        }
+
         int totalCents = input.items().stream()
                 .mapToInt(it -> valid.get(it.menuItemId()).priceCents() * it.qty())
                 .sum();
@@ -127,6 +142,7 @@ public class OrdersService {
                         .toList(),
                 input.readySlot(),
                 input.fulfillment(),
+                isDelivery ? deliveryAddress : null,
                 totalCents);
 
         if (!input.confirm()) {
@@ -137,6 +153,7 @@ public class OrdersService {
         // The PaymentIntent is created inside the same transaction on purpose: a provider
         // failure rolls everything back, which IS the compensating restore of Story 3.3 AC3.
         String orderId = UUID.randomUUID().toString();
+        String idempotencyKey = UUID.randomUUID().toString(); // doubles as Stripe idempotency key (Story 3.4)
         for (CreateOrderRequest.Item item : input.items()) {
             inventory.decrement(item.menuItemId(), item.qty());
         }
@@ -177,6 +194,20 @@ public class OrdersService {
                     .param("unitPriceCents", valid.get(item.menuItemId()).priceCents())
                     .update();
         }
+        // Story 3.4: charge inside the transaction — a failed payment rolls everything back.
+        String paymentIntentId = payments.charge(totalCents, idempotencyKey, orderId);
+        if (paymentIntentId != null) {
+            db.sql("UPDATE \"Order\" SET \"paymentIntentId\" = :pi WHERE id = :id")
+                    .param("pi", paymentIntentId)
+                    .param("id", orderId)
+                    .update();
+        }
+
+        // Story 4.2 (dev slice): delivery orders get a courier job right away.
+        if ("delivery".equals(input.fulfillment())) {
+            delivery.createJob(orderId);
+        }
+
         db.sql("""
                 INSERT INTO "AuditLog" (id, actor, entity, action, "after")
                 VALUES (:id, :actor, :entity, 'create', :after::jsonb)
@@ -227,6 +258,38 @@ public class OrdersService {
                 Map.of("orderId", orderId));
     }
 
+    /**
+     * FR5's 10-mile radius applies to delivery drop-offs too. The address is geocoded with
+     * tiered fallbacks (dev: Nominatim) and measured against the kitchen's PostGIS point.
+     * If no variant of the address resolves, the order is rejected so the buyer can give a
+     * clearer address — never delivered blind.
+     */
+    private void checkDeliveryRadius(String kitchenId, String deliveryAddress) {
+        GeocodingService.Point point = geocoding.geocode(deliveryAddress);
+        if (point == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "ADDRESS_NOT_FOUND: could not locate this address on the map. Ask the buyer "
+                            + "for a clearer address including the town/city name.");
+        }
+        Double meters = db.sql("""
+                SELECT ST_Distance(geo, ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography)
+                FROM "Kitchen" WHERE id = :kitchenId AND geo IS NOT NULL
+                """)
+                .param("lng", point.lng())
+                .param("lat", point.lat())
+                .param("kitchenId", kitchenId)
+                .query(Double.class)
+                .optional()
+                .orElse(null);
+        if (meters != null && meters > DELIVERY_RADIUS_MILES * METERS_PER_MILE) {
+            double miles = Math.round(meters / METERS_PER_MILE * 10) / 10.0;
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "ADDRESS_OUT_OF_RANGE: drop-off is " + miles
+                            + " miles from the kitchen; delivery is limited to "
+                            + (int) DELIVERY_RADIUS_MILES + " miles. Offer pickup or a closer address.");
+        }
+    }
+
     /** FR10: step-by-step address disclosure — street address only on a confirmed pickup order. */
     public OrderDetailResponse detail(String buyerId, String orderId) {
         record OrderRow(String id, String buyerId, String kitchenId, String menuDayId, String status,
@@ -235,8 +298,12 @@ public class OrdersService {
                 LocalDateTime createdAt, String kitchenName, String addressEncrypted) {
         }
         OrderRow order = db.sql("""
-                SELECT o.*, k.name AS kitchen_name, k."addressEncrypted"
-                FROM "Order" o JOIN "Kitchen" k ON k.id = o."kitchenId"
+                SELECT o.*, k.name AS kitchen_name, k."addressEncrypted",
+                       dj.provider::text AS delivery_provider, dj.status AS delivery_status,
+                       dj."trackingUrl", dj."feeCents" AS delivery_fee_cents
+                FROM "Order" o
+                JOIN "Kitchen" k ON k.id = o."kitchenId"
+                LEFT JOIN "DeliveryJob" dj ON dj."orderId" = o.id
                 WHERE o.id = :id
                 """)
                 .param("id", orderId)
@@ -251,7 +318,9 @@ public class OrdersService {
                                 : rs.getTimestamp("refundedAt").toLocalDateTime(),
                         rs.getString("idempotencyKey"),
                         rs.getTimestamp("createdAt").toLocalDateTime(),
-                        rs.getString("kitchen_name"), rs.getString("addressEncrypted")))
+                        rs.getString("kitchen_name"), rs.getString("addressEncrypted"),
+                        rs.getString("delivery_provider"), rs.getString("delivery_status"),
+                        rs.getString("trackingUrl"), rs.getObject("delivery_fee_cents", Integer.class)))
                 .optional()
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
         if (!order.buyerId().equals(buyerId)) {
@@ -261,7 +330,7 @@ public class OrdersService {
         List<OrderDetailResponse.Item> items = db.sql("""
                 SELECT oi.id, oi."orderId", oi."menuItemId", oi.qty, oi."unitPriceCents",
                        mi."menuDayId", mi."dishId", mi."portionsTotal", mi."portionsRemaining",
-                       d."kitchenId" AS dish_kitchen_id, d.name, d.description, d.photo,
+                       d."kitchenId" AS dish_kitchen_id, d.name, d.description, d.photo, d.calories,
                        d."priceCents", d."dietaryTags"
                 FROM "OrderItem" oi
                 JOIN "MenuItem" mi ON mi.id = oi."menuItemId"
@@ -287,6 +356,7 @@ public class OrdersService {
                                         rs.getString("name"),
                                         rs.getString("description"),
                                         rs.getString("photo"),
+                                        rs.getObject("calories", Integer.class),
                                         rs.getInt("priceCents"),
                                         stringList(rs, "dietaryTags")))))
                 .list();
@@ -571,15 +641,25 @@ public class OrdersService {
 
     /** Accepts ISO datetimes with or without offset, mirroring JS `new Date(string)`. */
     private static LocalDateTime parseReadySlot(String value) {
+        String v = value.trim();
         try {
-            return LocalDateTime.ofInstant(Instant.parse(value), ZoneOffset.UTC);
-        } catch (DateTimeParseException e) {
-            try {
-                return LocalDateTime.parse(value);
-            } catch (DateTimeParseException e2) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "READY_SLOT_INVALID");
+            return LocalDateTime.ofInstant(Instant.parse(v), ZoneOffset.UTC);
+        } catch (DateTimeParseException ignored) {
+        }
+        try {
+            return LocalDateTime.parse(v);
+        } catch (DateTimeParseException ignored) {
+        }
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("^(\\d{1,2}):(\\d{2})").matcher(v);
+        if (m.find()) {
+            int hour = Integer.parseInt(m.group(1));
+            int minute = Integer.parseInt(m.group(2));
+            if (hour <= 23 && minute <= 59) {
+                return java.time.LocalDate.now(ZoneOffset.UTC).atTime(hour, minute);
             }
         }
+        throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "READY_SLOT_INVALID: use ISO datetime (2026-07-10T17:00:00Z) or HH:mm");
     }
 
     private static List<String> stringList(ResultSet rs, String column) throws SQLException {

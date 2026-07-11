@@ -70,6 +70,18 @@
       <groupId>org.springframework.ai</groupId>
       <artifactId>spring-ai-starter-model-anthropic</artifactId>
     </dependency>
+    <!-- Dev default (free tier); production switches back to Anthropic via AI_PROVIDER. -->
+    <dependency>
+      <groupId>org.springframework.ai</groupId>
+      <artifactId>spring-ai-starter-model-google-genai</artifactId>
+    </dependency>
+
+    <!-- Story 3.4: Stripe payments (test mode in dev; activates when STRIPE_SECRET_KEY is set). -->
+    <dependency>
+      <groupId>com.stripe</groupId>
+      <artifactId>stripe-java</artifactId>
+      <version>29.5.0</version>
+    </dependency>
 
     <!-- Story 3.4: Stripe PaymentIntent + signature-verified webhooks. -->
     <dependency>

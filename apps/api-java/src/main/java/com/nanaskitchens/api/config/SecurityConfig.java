@@ -37,6 +37,11 @@ public class SecurityConfig {
                 .cors(Customizer.withDefaults())
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
+                        // SSE streaming (chat) ends with an ASYNC re-dispatch through this filter
+                        // chain; the original REQUEST dispatch was already authorized, and denying
+                        // here aborts the committed response mid-stream.
+                        .dispatcherTypeMatchers(jakarta.servlet.DispatcherType.ASYNC)
+                        .permitAll()
                         .requestMatchers("/health", "/error", "/auth/register", "/auth/login", "/auth/refresh")
                         .permitAll()
                         // search / public profile / published menu are public, like the NestJS service;
@@ -62,6 +67,17 @@ public class SecurityConfig {
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration config = new CorsConfiguration();
         config.setAllowedOriginPatterns(corsAllowedOriginPatterns);
+        config.setAllowedMethods(List.of("GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"));
+        config.setAllowedHeaders(List.of("Authorization", "Content-Type"));
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/**", config);
+        return source;
+    }
+
+    @Bean
+    public CorsConfigurationSource corsConfigurationSource() {
+        CorsConfiguration config = new CorsConfiguration();
+        config.setAllowedOrigins(List.of(webOrigin));
         config.setAllowedMethods(List.of("GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"));
         config.setAllowedHeaders(List.of("Authorization", "Content-Type"));
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();

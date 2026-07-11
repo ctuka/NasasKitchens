@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 
 interface Message {
   role: "user" | "assistant";
@@ -15,13 +16,37 @@ interface OrderSummary {
     totalCents: number;
     readySlot: string;
     fulfillment: string;
+    deliveryAddress?: string;
   };
   // raw draft stored so we can re-submit with confirm=true
   draft: Record<string, unknown>;
 }
 
+interface MenuCard {
+  type: "menu";
+  kitchenName: string;
+  kitchenId: string;
+  menuDayId: string;
+  items: {
+    menuItemId: string;
+    name: string;
+    description?: string | null;
+    photo?: string | null;
+    calories?: number | null;
+    priceCents: number;
+    portionsLeft?: number | null;
+    dietaryTags?: string[] | null;
+  }[];
+}
+
 // Java backend (apps/api-java); it proxies not-yet-ported endpoints to the legacy NestJS API.
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+
+const SUGGESTIONS = [
+  "Find Turkish food near me",
+  "What's cooking in Lefkoşa today?",
+  "I want to order sarma",
+];
 
 function cents(n: number) {
   return `$${(n / 100).toFixed(2)}`;
@@ -43,6 +68,7 @@ export default function ChatPage() {
   const recorderRef = useRef<MediaRecorder | null>(null);
   const recordTimerRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const token = typeof window !== "undefined" ? localStorage.getItem("access_token") ?? "" : "";
 
   useEffect(() => {
@@ -57,6 +83,8 @@ export default function ChatPage() {
     setMessages(next);
     setInput("");
     setStreaming(true);
+    setPendingMenu(null);
+    setPicked({});
 
     let assistantText = "";
     const addChunk = (delta: string) => {
@@ -71,6 +99,15 @@ export default function ChatPage() {
         body: JSON.stringify({ messages: next }),
       });
 
+      if (res.status === 401 || res.status === 403) {
+        window.location.href = "/login";
+        return;
+      }
+      if (!res.ok) {
+        setMessages([...next, { role: "assistant", content: `Something went wrong (HTTP ${res.status}). Please try again.` }]);
+        return;
+      }
+
       const reader = res.body!.getReader();
       const decoder = new TextDecoder();
       let buf = "";
@@ -82,23 +119,43 @@ export default function ChatPage() {
         const lines = buf.split("\n");
         buf = lines.pop() ?? "";
         for (const line of lines) {
-          if (!line.startsWith("data: ")) continue;
-          const payload = JSON.parse(line.slice(6));
+          // NestJS wrote "data: {...}", Spring MVC writes "data:{...}" — accept both.
+          if (!line.startsWith("data:")) continue;
+          const payload = JSON.parse(line.slice(5).trim());
           if (payload.type === "text") addChunk(payload.delta);
           else if (payload.type === "done") break;
         }
       }
 
-      // Try to parse a confirmation summary embedded in assistant text
-      const summaryMatch = assistantText.match(/```json\n([\s\S]*?)\n```/);
-      if (summaryMatch) {
+      // Structured card blocks embedded in assistant text (menu picker / order summary).
+      const blockMatch = assistantText.match(/```json\n([\s\S]*?)\n```/);
+      if (blockMatch) {
         try {
-          const parsed = JSON.parse(summaryMatch[1]);
-          if (parsed.confirmed === false && parsed.summary) setPendingSummary(parsed);
+          const parsed = JSON.parse(blockMatch[1]);
+          let handled = false;
+          if (parsed.type === "menu" && Array.isArray(parsed.items)) {
+            setPendingMenu(parsed);
+            handled = true;
+          } else if (parsed.confirmed === false && parsed.summary) {
+            setPendingSummary(parsed);
+            handled = true;
+          }
+          // The card renders the data; don't also show the raw JSON in the bubble.
+          if (handled) assistantText = assistantText.replace(blockMatch[0], "").trim();
         } catch {}
       }
 
       setMessages([...next, { role: "assistant", content: assistantText }]);
+    } catch {
+      setMessages([
+        ...next,
+        {
+          role: "assistant",
+          content: assistantText
+            ? assistantText + "\n\n[connection interrupted]"
+            : "Connection error. Please try again.",
+        },
+      ]);
     } finally {
       setStreaming(false);
     }
@@ -114,14 +171,41 @@ export default function ChatPage() {
     });
     const body = await res.json();
     setPendingSummary(null);
+    // POST /orders answers {confirmed: true, order: {...}} on success.
+    const order = body.order ?? body;
+    const tracking = order?.delivery?.trackingUrl
+      ? `\nTrack your delivery: [tracking link](${order.delivery.trackingUrl})`
+      : "";
     setMessages((prev) => [
       ...prev,
-      { role: "assistant", content: res.ok ? `Order placed! ID: ${body.id}` : `Error: ${body.message}` },
+      {
+        role: "assistant",
+        content: res.ok ? `Order placed! ID: ${order.id}${tracking}` : `Error: ${body.message}`,
+      },
     ]);
+  }
+
+  function addPickedToOrder() {
+    if (!pendingMenu) return;
+    const parts = pendingMenu.items
+      .filter((it) => (picked[it.menuItemId] ?? 0) > 0)
+      .map((it) => `${picked[it.menuItemId]} x ${it.name}`);
+    if (parts.length === 0) return;
+    const text = `I'd like ${parts.join(", ")} from ${pendingMenu.kitchenName}.`;
+    setPendingMenu(null);
+    setPicked({});
+    send(text);
   }
 
   function onSubmit(e: FormEvent) {
     e.preventDefault();
+    if (!input.trim()) return;
+    if (streaming) {
+      // Queue it; the effect above fires it as soon as the assistant finishes.
+      setQueued(input.trim());
+      setInput("");
+      return;
+    }
     send(input);
   }
 
@@ -194,104 +278,289 @@ export default function ChatPage() {
   }
 
   return (
-    <main style={{ display: "flex", flexDirection: "column", height: "100dvh", maxWidth: 680, margin: "0 auto" }}>
-      <header style={{ padding: "12px 16px", borderBottom: "1px solid #e5e7eb", fontWeight: 700, fontSize: 18 }}>
-        Nanas' Kitchens — Order Assistant
+    <main
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        minHeight: "100dvh",
+        maxWidth: 760,
+        margin: "0 auto",
+        padding: "14px 16px 0",
+        position: "relative",
+      }}
+    >
+      <div className="hero-glow" aria-hidden="true" style={{ opacity: 0.6 }} />
+
+      <header className="island-nav" style={{ maxWidth: 480, margin: "0 auto", width: "100%" }}>
+        <Link href="/" style={{ fontWeight: 700, fontSize: 16, letterSpacing: "-0.02em" }}>
+          Nanas&rsquo; Kitchens
+        </Link>
+        <button
+          onClick={signOut}
+          className="btn btn-ghost"
+          style={{ padding: "7px 16px", fontSize: 13.5 }}
+        >
+          Sign out
+        </button>
       </header>
 
-      <div role="log" aria-live="polite" style={{ flex: 1, overflowY: "auto", padding: "16px" }}>
+      <div role="log" aria-live="polite" style={{ flex: 1, overflowY: "auto", padding: "24px 2px" }}>
         {messages.length === 0 && (
-          <p style={{ color: "#6b7280", textAlign: "center", marginTop: 40 }}>
-            Ask me to find food near you, browse a menu, or place an order.
-          </p>
+          <div style={{ textAlign: "center", marginTop: "13vh" }}>
+            <div className="halo-orb stagger" style={{ "--i": 0 } as React.CSSProperties}>
+              N
+            </div>
+            <h1
+              className="stagger"
+              style={
+                {
+                  "--i": 1,
+                  fontSize: "clamp(26px, 4vw, 34px)",
+                  fontWeight: 700,
+                  letterSpacing: "-0.03em",
+                  margin: "0 0 10px",
+                } as React.CSSProperties
+              }
+            >
+              What are you <span className="hero-em">craving</span> today?
+            </h1>
+            <p
+              className="stagger"
+              style={{ "--i": 2, color: "var(--text-2)", fontSize: 15.5, margin: "0 0 32px" } as React.CSSProperties}
+            >
+              Find kitchens, browse menus, and order in one conversation.
+            </p>
+            <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
+              {SUGGESTIONS.map((s, i) => (
+                <button
+                  key={s}
+                  className="chip stagger"
+                  style={{ "--i": 3 + i } as React.CSSProperties}
+                  onClick={() => send(s)}
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+          </div>
         )}
+
         {messages.map((m, i) => (
           <div
             key={i}
+            className="fade-up"
             style={{
-              marginBottom: 12,
+              marginBottom: 16,
               display: "flex",
+              gap: 10,
               justifyContent: m.role === "user" ? "flex-end" : "flex-start",
             }}
           >
-            <div
-              style={{
-                maxWidth: "80%",
-                padding: "10px 14px",
-                borderRadius: 16,
-                background: m.role === "user" ? "#2563eb" : "#f3f4f6",
-                color: m.role === "user" ? "#fff" : "#111",
-                whiteSpace: "pre-wrap",
-                fontSize: 15,
-              }}
-            >
-              {m.content}
+            {m.role === "assistant" && <div className="avatar-orb">N</div>}
+            <div className={`bubble ${m.role === "user" ? "bubble-user" : "bubble-assistant"}`}>
+              {renderRich(m.content)}
             </div>
           </div>
         ))}
 
+        {showTyping && (
+          <div className="fade-up" style={{ display: "flex", gap: 10, justifyContent: "flex-start", marginBottom: 16 }}>
+            <div className="avatar-orb">N</div>
+            <div
+              className="bubble bubble-assistant"
+              style={{ display: "flex", gap: 5, alignItems: "center", padding: "15px 18px" }}
+              aria-label="Assistant is typing"
+            >
+              <span className="typing-dot" />
+              <span className="typing-dot" />
+              <span className="typing-dot" />
+            </div>
+          </div>
+        )}
+
+        {/* Dish picker card: photos, ingredients, calories, quantity steppers */}
+        {pendingMenu && (
+          <div className="fade-up shell" style={{ margin: "14px 0" }}>
+            <div className="shell-core" style={{ padding: "18px 20px" }}>
+              <h2 style={{ margin: "0 0 2px", fontSize: 16, fontWeight: 700 }}>
+                {pendingMenu.kitchenName}
+              </h2>
+              <p style={{ margin: "0 0 6px", color: "var(--text-2)", fontSize: 13.5 }}>
+                Pick your dishes, then add them to the order.
+              </p>
+              {pendingMenu.items.map((it) => {
+                const q = picked[it.menuItemId] ?? 0;
+                const max = it.portionsLeft ?? 99;
+                return (
+                  <div key={it.menuItemId} className="dish-row">
+                    {it.photo ? (
+                      <img src={it.photo} alt={it.name} className="dish-photo" />
+                    ) : (
+                      <div className="dish-photo" />
+                    )}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 600, fontSize: 15 }}>{it.name}</div>
+                      {it.description && (
+                        <div
+                          style={{
+                            fontSize: 13,
+                            color: "var(--text-2)",
+                            marginTop: 2,
+                            lineHeight: 1.45,
+                          }}
+                        >
+                          {it.description}
+                        </div>
+                      )}
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 8,
+                          marginTop: 6,
+                          flexWrap: "wrap",
+                        }}
+                      >
+                        <span style={{ fontWeight: 700, fontSize: 14 }}>{cents(it.priceCents)}</span>
+                        {typeof it.calories === "number" && (
+                          <span className="kcal">~{it.calories} kcal</span>
+                        )}
+                        {typeof it.portionsLeft === "number" && (
+                          <span style={{ fontSize: 12.5, color: "var(--text-3)" }}>
+                            {it.portionsLeft} left
+                          </span>
+                        )}
+                        {(it.dietaryTags ?? []).map((tag) => (
+                          <span key={tag} className="kcal" style={{ textTransform: "capitalize" }}>
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="stepper" aria-label={`Quantity for ${it.name}`}>
+                      <button
+                        type="button"
+                        disabled={q === 0}
+                        onClick={() => setPicked({ ...picked, [it.menuItemId]: Math.max(0, q - 1) })}
+                        aria-label={`Remove one ${it.name}`}
+                      >
+                        &minus;
+                      </button>
+                      <span className="qty">{q}</span>
+                      <button
+                        type="button"
+                        disabled={q >= max}
+                        onClick={() => setPicked({ ...picked, [it.menuItemId]: q + 1 })}
+                        aria-label={`Add one ${it.name}`}
+                      >
+                        +
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+              {(() => {
+                const count = Object.values(picked).reduce((a, b) => a + b, 0);
+                const total = pendingMenu.items.reduce(
+                  (sum, it) => sum + (picked[it.menuItemId] ?? 0) * it.priceCents,
+                  0,
+                );
+                return (
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      marginTop: 14,
+                      gap: 12,
+                    }}
+                  >
+                    <span style={{ fontSize: 14.5, color: "var(--text-2)" }}>
+                      {count > 0 ? (
+                        <>
+                          {count} item{count === 1 ? "" : "s"},{" "}
+                          <strong style={{ color: "var(--text)" }}>{cents(total)}</strong>
+                        </>
+                      ) : (
+                        "Nothing picked yet"
+                      )}
+                    </span>
+                    <button
+                      onClick={addPickedToOrder}
+                      disabled={count === 0 || streaming}
+                      className="btn btn-primary"
+                      style={{ padding: "10px 22px" }}
+                    >
+                      Add to order
+                    </button>
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+        )}
+
         {/* Order confirmation card (FR15) */}
         {pendingSummary && (
-          <div
-            role="dialog"
-            aria-labelledby="summary-heading"
-            style={{
-              border: "2px solid #2563eb",
-              borderRadius: 12,
-              padding: 16,
-              margin: "12px 0",
-              background: "#eff6ff",
-            }}
-          >
-            <h2 id="summary-heading" style={{ margin: "0 0 8px", fontSize: 16 }}>
-              Order Summary — please confirm
+          <div role="dialog" aria-labelledby="summary-heading" className="fade-up shell" style={{ margin: "14px 0" }}>
+            <div className="shell-core" style={{ padding: 20 }}>
+            <h2 id="summary-heading" style={{ margin: "0 0 4px", fontSize: 16, fontWeight: 700 }}>
+              Order summary
             </h2>
             {pendingSummary.summary.kitchenName && (
-              <p style={{ margin: "0 0 4px", fontWeight: 600 }}>{pendingSummary.summary.kitchenName}</p>
+              <p style={{ margin: "0 0 12px", color: "var(--text-2)", fontSize: 14 }}>
+                {pendingSummary.summary.kitchenName}
+              </p>
             )}
-            <ul style={{ margin: "8px 0", paddingLeft: 20 }}>
+            <div style={{ borderTop: "1px solid var(--line)", padding: "12px 0", margin: "8px 0" }}>
               {pendingSummary.summary.items.map((it, i) => (
-                <li key={i}>
-                  {it.qty}× {it.name} — {cents(it.priceCents * it.qty)}
-                </li>
+                <div
+                  key={i}
+                  style={{ display: "flex", justifyContent: "space-between", fontSize: 15, padding: "4px 0" }}
+                >
+                  <span>
+                    {it.qty} &times; {it.name}
+                  </span>
+                  <span style={{ fontWeight: 600 }}>{cents(it.priceCents * it.qty)}</span>
+                </div>
               ))}
-            </ul>
-            <p style={{ margin: "4px 0" }}>
-              <strong>Total:</strong> {cents(pendingSummary.summary.totalCents)}
+            </div>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                fontSize: 15,
+                fontWeight: 700,
+                padding: "4px 0 2px",
+              }}
+            >
+              <span>Total</span>
+              <span>{cents(pendingSummary.summary.totalCents)}</span>
+            </div>
+            <p style={{ margin: "10px 0 2px", fontSize: 14, color: "var(--text-2)" }}>
+              Ready {fmtSlot(pendingSummary.summary.readySlot)}
+              {", "}
+              {pendingSummary.summary.fulfillment}
             </p>
-            <p style={{ margin: "4px 0" }}>
-              <strong>Ready:</strong> {new Date(pendingSummary.summary.readySlot).toLocaleString()}
+            {pendingSummary.summary.deliveryAddress && (
+              <>
+                <p style={{ margin: "8px 0 0", fontSize: 14.5 }}>
+                  <strong>Deliver to:</strong> {pendingSummary.summary.deliveryAddress}
+                </p>
+                <AddressMap address={pendingSummary.summary.deliveryAddress} />
+              </>
+            )}
+            <p style={{ margin: "16px 0 0", fontSize: 15, fontWeight: 600 }}>
+              Do you confirm this order?
             </p>
-            <p style={{ margin: "4px 0 12px" }}>
-              <strong>Fulfillment:</strong> {pendingSummary.summary.fulfillment}
-            </p>
-            <div style={{ display: "flex", gap: 8 }}>
-              <button
-                onClick={confirmOrder}
-                style={{
-                  background: "#2563eb",
-                  color: "#fff",
-                  border: "none",
-                  borderRadius: 8,
-                  padding: "8px 20px",
-                  cursor: "pointer",
-                  fontWeight: 600,
-                }}
-              >
+            <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
+              <button onClick={confirmOrder} className="btn btn-primary" style={{ padding: "10px 22px" }}>
                 Confirm order
               </button>
-              <button
-                onClick={() => setPendingSummary(null)}
-                style={{
-                  background: "transparent",
-                  border: "1px solid #6b7280",
-                  borderRadius: 8,
-                  padding: "8px 16px",
-                  cursor: "pointer",
-                }}
-              >
+              <button onClick={() => setPendingSummary(null)} className="btn btn-ghost" style={{ padding: "9px 18px" }}>
                 Cancel
               </button>
+            </div>
             </div>
           </div>
         )}

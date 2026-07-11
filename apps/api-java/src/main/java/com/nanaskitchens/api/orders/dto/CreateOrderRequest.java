@@ -14,6 +14,8 @@ public record CreateOrderRequest(
         @NotEmpty @Valid List<Item> items,
         @NotBlank String readySlot,
         @Pattern(regexp = "pickup|delivery") String fulfillment,
+        // Required for delivery orders; street address the courier drops off at.
+        String deliveryAddress,
         boolean confirm) {
 
     public record Item(@NotBlank String menuItemId, @Min(1) int qty) {

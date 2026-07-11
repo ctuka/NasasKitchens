@@ -184,6 +184,28 @@ public class KitchensService {
                 .update();
     }
 
+    /**
+     * Chat-agent affordance: accepts either a kitchen UUID or a kitchen name (case-insensitive,
+     * partial ok) and returns the UUID. Tool calls arrive with names when the UUID from an
+     * earlier conversation turn is no longer in the model's context.
+     */
+    public String resolveKitchenId(String idOrName) {
+        if (idOrName == null) {
+            return null;
+        }
+        String v = idOrName.trim();
+        if (v.matches("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")) {
+            return v;
+        }
+        return db.sql("""
+                SELECT id FROM "Kitchen" WHERE name ILIKE :name ORDER BY LENGTH(name) ASC LIMIT 1
+                """)
+                .param("name", "%" + v + "%")
+                .query((rs, n) -> rs.getString("id"))
+                .optional()
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "KITCHEN_NOT_FOUND:" + v));
+    }
+
     /** FR5 + NFR2: PostGIS search within a 10-mile radius, ordered by distance. */
     public List<KitchenSearchResult> search(double lat, double lng, String cuisine) {
         double radiusMeters = SEARCH_RADIUS_MILES * METERS_PER_MILE;
@@ -206,7 +228,7 @@ public class KitchensService {
                 WHERE k."complianceAttestedAt" IS NOT NULL
                   AND k.geo IS NOT NULL
                   AND ST_DWithin(k.geo, ST_SetSRID(ST_MakePoint(:lng, :lat),4326)::geography, :radius)
-                  AND (:cuisine::text IS NULL OR k."cuisineTag" = :cuisine)
+                  AND (:cuisine::text IS NULL OR k."cuisineTag" = LOWER(:cuisine))
                 ORDER BY meters ASC
                 LIMIT 50
                 """)
@@ -269,6 +291,7 @@ public class KitchensService {
                        md."readyWindows"::text AS ready_windows,
                        mi.id AS item_id, mi."dishId", mi."portionsTotal", mi."portionsRemaining",
                        d.name AS dish_name, d.description AS dish_description, d.photo AS dish_photo,
+                       d.calories AS dish_calories,
                        d."priceCents", d."dietaryTags", d."kitchenId" AS dish_kitchen_id
                 FROM "MenuDay" md
                 LEFT JOIN "MenuItem" mi ON mi."menuDayId" = md.id
@@ -298,6 +321,7 @@ public class KitchensService {
                                         rs.getString("dish_name"),
                                         rs.getString("dish_description"),
                                         rs.getString("dish_photo"),
+                                        rs.getObject("dish_calories", Integer.class),
                                         rs.getInt("priceCents"),
                                         stringList(rs, "dietaryTags"))));
                     }
