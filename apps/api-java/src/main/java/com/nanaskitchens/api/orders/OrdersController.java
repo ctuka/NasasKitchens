@@ -30,6 +30,13 @@ public class OrdersController {
         return orders.place(auth.getName(), request);
     }
 
+    /** Buyer order history — most recent first. */
+    @GetMapping
+    public List<Map<String, Object>> mine(
+            Authentication auth, @RequestParam(required = false) String status) {
+        return orders.listForBuyer(auth.getName(), status);
+    }
+
     @GetMapping("/{id}")
     public OrderDetailResponse detail(Authentication auth, @PathVariable String id) {
         return orders.detail(auth.getName(), id);

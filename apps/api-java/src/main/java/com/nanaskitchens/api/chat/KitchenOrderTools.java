@@ -37,10 +37,12 @@ public class KitchenOrderTools {
         this.buyerId = buyerId;
     }
 
-    @Tool(description = "Search for kitchens within 10 miles. Returns list with name, cuisine, distance, portions left.")
+    @Tool(description = "Search for kitchens within 10 miles. Give either lat/lng coordinates or a city/postal-code location (for example 43065). Returns name, cuisine, distance, and live portions left.")
     public String searchKitchens(
             Double lat,
             Double lng,
+            @ToolParam(required = false, description = "A city, address, or postal code supplied by the buyer, such as 43065. Use this when lat/lng are not available.")
+                    String location,
             @ToolParam(
                             required = false,
                             description = "Exact tag, one of: turkish, chinese, mexican, indian, italian, "
@@ -48,6 +50,12 @@ public class KitchenOrderTools {
                                     + "other. Map the user's language to these tags (e.g. \"Türk mutfağı\" -> turkish). "
                                     + "Omit to list all cuisines.")
                     String cuisine) {
+        if (lat != null && lng != null) {
+            return guarded(() -> kitchens.search(lat, lng, cuisine));
+        }
+        if (location != null && !location.isBlank()) {
+            return guarded(() -> kitchens.searchByLocation(location, cuisine));
+        }
         if (lat == null || lng == null) {
             return jsonMapper.writeValueAsString(Map.of(
                     "error", "LOCATION_REQUIRED",

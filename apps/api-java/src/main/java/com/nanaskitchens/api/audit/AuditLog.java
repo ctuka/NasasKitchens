@@ -35,6 +35,20 @@ public class AuditLog {
     @Column(name = "at", nullable = false)
     private LocalDateTime at;
 
+    // Kept explicitly in addition to Lombok so this entity compiles in minimal Maven
+    // environments where annotation processing is disabled.
+    public void setActor(String actor) {
+        this.actor = actor;
+    }
+
+    public void setEntity(String entity) {
+        this.entity = entity;
+    }
+
+    public void setAction(String action) {
+        this.action = action;
+    }
+
     @PrePersist
     void prePersist() {
         if (id == null) {

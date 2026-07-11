@@ -26,6 +26,9 @@ interface MenuDay {
 }
 
 interface PricedSummary {
+  foodSubtotalCents: number;
+  deliveryFeeCents: number;
+  courierTipCents: number;
   totalCents: number;
 }
 
@@ -60,6 +63,8 @@ export default function CheckoutPage() {
   const [menu, setMenu] = useState<MenuDay | null | undefined>(undefined);
   const [slot, setSlot] = useState<string | null>(null);
   const [fulfillment, setFulfillment] = useState<Fulfillment>("pickup");
+  const [deliveryAddress, setDeliveryAddress] = useState("");
+  const [courierTipCents, setCourierTipCents] = useState(0);
   const [summary, setSummary] = useState<PricedSummary | null>(null);
   const [payment, setPayment] = useState<PendingPayment | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -100,6 +105,8 @@ export default function CheckoutPage() {
       items: cart!.lines.map((l) => ({ menuItemId: l.menuItemId, qty: l.qty })),
       readySlot: slot,
       fulfillment,
+      deliveryAddress: fulfillment === "delivery" ? deliveryAddress.trim() : null,
+      courierTipCents: fulfillment === "delivery" ? courierTipCents : 0,
       confirm,
     };
   }
@@ -269,6 +276,7 @@ export default function CheckoutPage() {
           aria-pressed={fulfillment === "pickup"}
           onClick={() => {
             setFulfillment("pickup");
+            setCourierTipCents(0);
             setSummary(null);
           }}
         >
@@ -285,10 +293,26 @@ export default function CheckoutPage() {
         </button>
       </div>
       {fulfillment === "delivery" && (
-        <p style={{ fontSize: 13, color: "var(--brand-muted)", margin: "-8px 0 8px" }}>
-          The delivery fee is quoted by the courier when your order is prepared, so it isn&rsquo;t
-          in the total below yet.
-        </p>
+        <div style={{ margin: "-4px 0 8px" }}>
+          <input
+            aria-label="Delivery address"
+            value={deliveryAddress}
+            onChange={(e) => { setDeliveryAddress(e.target.value); setSummary(null); }}
+            placeholder="Delivery address, city"
+            style={{ width: "100%", boxSizing: "border-box", padding: 10, borderRadius: 8, border: "1px solid var(--line)" }}
+          />
+          <p style={{ fontSize: 13, color: "var(--brand-muted)", margin: "8px 0" }}>
+            Delivery is available within 10 miles. Courier fee: {money(399)}.
+          </p>
+          <div className="pill-row" aria-label="Courier tip">
+            {[0, 200, 400, 600].map((tip) => (
+              <button key={tip} className="pill" aria-pressed={courierTipCents === tip}
+                onClick={() => { setCourierTipCents(tip); setSummary(null); }}>
+                {tip === 0 ? "No tip" : `${money(tip)} tip`}
+              </button>
+            ))}
+          </div>
+        </div>
       )}
 
       {payment ? (
@@ -299,7 +323,7 @@ export default function CheckoutPage() {
             <span style={{ color: "var(--brand-muted)" }}>Subtotal</span>
             <strong>{money(subtotal)}</strong>
           </div>
-          <button className="btn-primary" disabled={!slot || busy || !menu} onClick={review}>
+          <button className="btn-primary" disabled={!slot || busy || !menu || (fulfillment === "delivery" && !deliveryAddress.trim())} onClick={review}>
             {busy ? "Pricing…" : "Review order"}
           </button>
         </>
@@ -314,7 +338,13 @@ export default function CheckoutPage() {
             <strong style={{ textTransform: "capitalize" }}>{fulfillment}</strong>
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
-            <span>Total{fulfillment === "delivery" ? " (before delivery fee)" : ""}</span>
+            <span>Food subtotal</span>
+            <strong>{money(summary.foodSubtotalCents)}</strong>
+          </div>
+          {summary.deliveryFeeCents > 0 && <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}><span>Courier delivery</span><strong>{money(summary.deliveryFeeCents)}</strong></div>}
+          {summary.courierTipCents > 0 && <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}><span>Courier tip</span><strong>{money(summary.courierTipCents)}</strong></div>}
+          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
+            <span>Total</span>
             <strong>{money(summary.totalCents)}</strong>
           </div>
           <p style={{ fontSize: 12, color: "var(--brand-muted)", marginTop: 0 }}>

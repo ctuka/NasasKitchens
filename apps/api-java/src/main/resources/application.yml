@@ -61,10 +61,6 @@ app:
   stripe:
     # Test-mode key (sk_test_...). Empty = payments skipped (orders confirm without charge).
     secret-key: ${STRIPE_SECRET_KEY:}
-  delivery:
-    # mock = fake courier for dev (Story 4.2 swaps in doordash when Drive credentials exist).
-    provider: ${DELIVERY_PROVIDER:mock}
-    mock-fee-cents: 399
   jwt:
     # Shared with the NestJS service's JWT_SECRET so access tokens are valid on both
     # backends during the migration. Must be >= 32 bytes (HS256 key requirement).
@@ -76,7 +72,14 @@ app:
     # mock | doordash | grubhub — mock ships until partner sandbox credentials exist
     # (architecture.md risk mitigation: same provider interface, pickup-only launch flag).
     provider: ${DELIVERY_PROVIDER:mock}
+    mock-fee-cents: 399
     webhook-secret: ${DELIVERY_WEBHOOK_SECRET:dev-delivery-webhook-secret}
+  menus:
+    # Daily rollover (UTC midnight trap fix): republishes each kitchen's latest published
+    # menu for the new UTC day with fresh portions. Idempotent; skips kitchens that already
+    # have a MenuDay today. Dev/demo default — set MENU_DAILY_ROLLOVER=false when sellers
+    # are expected to publish daily themselves.
+    daily-rollover: ${MENU_DAILY_ROLLOVER:true}
   payments:
     # mock | stripe (Story 3.4) — mock settles instantly so the demo needs no Stripe keys;
     # stripe creates real PaymentIntents and settles orders via /webhooks/stripe.

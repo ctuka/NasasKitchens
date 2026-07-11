@@ -48,6 +48,7 @@ export default function Header() {
       <nav style={{ display: "flex", alignItems: "center", gap: 18, fontSize: 15 }}>
         <Link href="/">Home</Link>
         <Link href="/chat">Chat</Link>
+        {session?.role === "buyer" && <Link href="/orders">My Orders</Link>}
         {session?.role === "seller" && <Link href="/seller/orders">Orders</Link>}
         {session?.role === "seller" && <Link href="/seller/menu">My Menu</Link>}
         {session?.role === "seller" && <Link href="/seller/kitchen">My Kitchen</Link>}

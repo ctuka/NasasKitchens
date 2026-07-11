@@ -9,6 +9,9 @@ public record OrderSummary(
         String readySlot,
         String fulfillment,
         String deliveryAddress,
+        int foodSubtotalCents,
+        int deliveryFeeCents,
+        int courierTipCents,
         int totalCents) {
 
     public record Item(String menuItemId, String dish, int qty, int unitPriceCents) {

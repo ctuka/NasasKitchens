@@ -248,6 +248,21 @@ public class KitchensService {
                 .list();
     }
 
+    /** Resolves a city or postal code before using the same canonical nearby-kitchen search. */
+    public List<KitchenSearchResult> searchByLocation(String location, String cuisine) {
+        if (location == null || location.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "LOCATION_REQUIRED");
+        }
+        String query = location.trim();
+        // A postal code alone is ambiguous outside the US; in this demo it is a US marketplace.
+        if (query.matches("\\d{5}(-\\d{4})?")) {
+            query += ", USA";
+        }
+        double[] point = geocoding.geocode(query)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "LOCATION_NOT_FOUND"));
+        return search(point[0], point[1], cuisine);
+    }
+
     /** The street address NEVER leaves this serializer (FR10 / Story 1.3 AC3). */
     public KitchenProfile publicProfile(String id) {
         return db.sql("""

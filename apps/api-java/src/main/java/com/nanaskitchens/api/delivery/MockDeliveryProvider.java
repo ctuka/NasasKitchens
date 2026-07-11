@@ -26,8 +26,8 @@ public class MockDeliveryProvider implements DeliveryProvider {
 
     @Override
     public Quote quote(String pickupAddress, String orderId) {
-        // Deterministic pseudo-distance fee so tests are stable: base + 0..300 by order hash.
-        int feeCents = BASE_FEE_CENTS + Math.floorMod(orderId.hashCode(), 4) * 100;
+        // Matches the fee shown at checkout; a real DoorDash/Grubhub adapter replaces this quote.
+        int feeCents = BASE_FEE_CENTS;
         String quoteId = "mockq_" + UUID.randomUUID();
         quotes.put(quoteId, feeCents);
         return new Quote(quoteId, feeCents);

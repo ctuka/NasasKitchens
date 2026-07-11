@@ -7,8 +7,9 @@ Backend Java'ya tasindi (strangler migration): `apps/api-java` (Spring Boot 4 + 
 ana API'dir (:8080) — auth, kitchens, menuler, inventory, orders, teslimat ve AI chat
 agent'i dahil. Frontend (Next.js, `apps/web`) ve MCP sunucusu yalnizca :8080 ile konusur;
 eski NestJS API'si (:3001) referans olarak durur. Mobil uygulama Kotlin Multiplatform +
-Compose Multiplatform ile (iOS + Android tek codebase, `apps/mobile`) ayni REST/SSE
-API'sini kullanacak. Detay: `apps/api-java/README.md`, `docs/front-end-spec.md`.
+Compose Multiplatform ile (iOS + Android tek codebase, `apps/mobile`) ayni REST
+API'sini kullanir. API kapaliyken urun demosu yerel ornek veriyle calisir. Detay:
+`apps/mobile/README.md`, `apps/api-java/README.md`, `docs/front-end-spec.md`.
 
 ## Calistirma
 ```bash
@@ -41,6 +42,45 @@ curl 'localhost:8080/kitchens/search?lat=37.788&lng=-122.4075'
 - [x] 4.1 Satici siparis yasam dongusu
 - [~] 4.2 Teslimat (mock provider; DoorDash/Grubhub kimlik bilgisi bekliyor)
 - [x] 5.1 MCP sunucusu        - [x] 5.2 Konusma agenti
+- [~] 5.3 Sesli giris (kayit + sunucu tarafi transkripsiyon; Whisper anahtari yoksa mock)
 - [~] 4.4 Bildirimler (uygulama ici inbox + web zili; push/email kanali FCM/SES
       kimlik bilgisi bekliyor, NOTIFICATIONS_CHANNEL=log)
-- [ ] 6.x guven/topluluk, 7.x mufettis portali, satici web portali
+- [x] 6.1 Puan & yorumlar     - [x] 6.2 Menu anketleri  - [x] 6.3 Yemek istekleri
+- [x] 7.1 Saglik belgeleri    - [x] 7.2 Mufettis portali - [x] 7.3 Admin konsolu + itirazlar
+- [x] Satici web portali (menu/porsiyon, siparis panosu, profil+foto, kazanclar)
+- [x] Alici siparis gecmisi (/orders)
+- [ ] Kalanlar: gercek DoorDash/Grubhub, Stripe Connect satici odemeleri, FCM/SES
+      kanallari, token refresh UI akisi, gunluk seed otomasyonu
+
+## Geliştirici notu — son çalışma (11 Temmuz 2026)
+
+### Tamamlananlar
+
+- Java API, kök `.env` içindeki `GEMINI_API_KEY` ile çalışacak şekilde yapılandırıldı.
+- Chat aracı artık şehir veya posta koduyla (ör. `43065`) mutfak arayabiliyor; isimle
+  istenen bir mutfağın menüsü doğrudan kontrol ediliyor.
+- 43065 demo pazaryeri stoklu menülerle güncellendi: Nana Elif's Anatolian Table,
+  Ayse's Anatolian Kitchen ve Teta Mariam's Lebanese Kitchen.
+- Checkout akışında pickup sınırsız mesafede kullanılabilir. Teslimat için adres doğrulaması,
+  10 mil yarıçap kontrolü, $3.99 demo kurye ücreti ve isteğe bağlı kurye bahşişi eklendi.
+- Web ana sayfasının demo konumu 43065 / Powell, OH ile eşitlendi.
+
+### Devam edenler / dikkat edilmesi gerekenler
+
+- Teslimat sağlayıcısı şu an DoorDash-benzeri `mock` sağlayıcıdır. Gerçek DoorDash veya
+  Grubhub anahtarları geldiğinde aynı `DeliveryProvider` arayüzüne gerçek adaptör eklenmeli.
+- Gerçek ödeme için Stripe test anahtarları ve Stripe Connect satıcı onboarding akışı gerekir.
+- Java API değiştirildiğinde yeniden başlatılmalıdır:
+
+  ```bash
+  cd apps/api-java
+  set -a && source ../../.env && set +a
+  ./mvnw spring-boot:run
+  ```
+
+- Web geliştirme sunucusunda macOS dosya izleme limiti yaşanırsa şu komutu kullanın:
+
+  ```bash
+  cd apps/web
+  WATCHPACK_POLLING=true npm run dev -- -p 3010
+  ```

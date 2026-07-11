@@ -17,8 +17,8 @@ interface KitchenResult {
   photo: string | null;
 }
 
-// Demo fallback: seed data lives around Union Square, SF.
-const DEMO_LOCATION = { lat: 37.788, lng: -122.4075, label: "San Francisco (demo)" };
+// Demo fallback matches the seeded Powell, Ohio (43065) marketplace.
+const DEMO_LOCATION = { lat: 40.1578, lng: -83.0752, label: "43065 (Powell, OH)" };
 
 export default function BuyerHome() {
   const [location, setLocation] = useState<{ lat: number; lng: number; label: string } | null>(null);

@@ -19,7 +19,7 @@ import tools.jackson.databind.json.JsonMapper;
  * treat that as "cannot verify", not as a hard failure, so patchy coverage (e.g. Northern
  * Cyprus) does not block real orders.
  */
-@Service
+@Service("deliveryGeocodingService")
 public class GeocodingService {
 
     public record Point(double lat, double lng) {

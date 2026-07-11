@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { apiFetch, clearTokens } from "../../lib/api";
 
 interface Message {
   role: "user" | "assistant";
@@ -39,9 +40,6 @@ interface MenuCard {
   }[];
 }
 
-// Java backend (apps/api-java); it proxies not-yet-ported endpoints to the legacy NestJS API.
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
-
 const SUGGESTIONS = [
   "Find Turkish food near me",
   "What's cooking in Lefkoşa today?",
@@ -56,11 +54,152 @@ function cents(n: number) {
 const CONFIDENCE_THRESHOLD = 0.85;
 const MAX_RECORDING_SECONDS = 60;
 
+/** Renders ISO datetimes in locale format; falls back to the raw text ("18:00", "ASAP"). */
+function fmtSlot(value: string) {
+  const t = Date.parse(value);
+  return Number.isNaN(t) ? value : new Date(t).toLocaleString();
+}
+
+/** Geocodes the drop-off address (OpenStreetMap Nominatim) and embeds a marked map. */
+function AddressMap({ address }: { address: string }) {
+  const [coords, setCoords] = useState<{ lat: number; lon: number } | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    setCoords(null);
+    setFailed(false);
+    // Same tiered fallback as the server: drop leading tokens until a variant resolves.
+    const tokens = address.trim().replace(/[,;]+/g, " ").split(/\s+/);
+    const candidates = [];
+    for (let drop = 0; drop <= Math.min(3, tokens.length - 2); drop++) {
+      candidates.push(tokens.slice(drop).join(" "));
+    }
+    (async () => {
+      for (const candidate of candidates) {
+        try {
+          const r = await fetch(
+            `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(candidate)}`,
+            { headers: { accept: "application/json" } },
+          );
+          const d = await r.json();
+          if (!alive) return;
+          if (Array.isArray(d) && d[0]) {
+            setCoords({ lat: +d[0].lat, lon: +d[0].lon });
+            return;
+          }
+        } catch {
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1100));
+        if (!alive) return;
+      }
+      if (alive) setFailed(true);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [address]);
+
+  if (failed) {
+    return (
+      <p style={{ fontSize: 13.5, color: "var(--text-3)", margin: "8px 0 0" }}>
+        Map preview unavailable for this address.
+      </p>
+    );
+  }
+  if (!coords) {
+    return (
+      <div
+        style={{
+          height: 190,
+          borderRadius: 14,
+          background: "var(--surface-2)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          color: "var(--text-3)",
+          fontSize: 14,
+          marginTop: 12,
+        }}
+      >
+        Locating address on the map
+      </div>
+    );
+  }
+  const d = 0.004;
+  const bbox = `${coords.lon - d},${coords.lat - d},${coords.lon + d},${coords.lat + d}`;
+  return (
+    <iframe
+      title="Delivery drop-off location"
+      src={`https://www.openstreetmap.org/export/embed.html?bbox=${encodeURIComponent(bbox)}&layer=mapnik&marker=${coords.lat}%2C${coords.lon}`}
+      style={{ width: "100%", height: 190, border: "1px solid var(--line)", borderRadius: 14, marginTop: 12 }}
+      loading="lazy"
+    />
+  );
+}
+
+/** Inline markdown: [label](url) links and **bold**. No raw HTML ever reaches the DOM. */
+function renderInline(text: string, keyBase: string) {
+  const nodes: React.ReactNode[] = [];
+  // Split out links first, then bold within the remaining text.
+  const linkParts = text.split(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g);
+  for (let i = 0; i < linkParts.length; i += 3) {
+    const plain = linkParts[i];
+    if (plain) {
+      const boldParts = plain.split(/\*\*([^*]+)\*\*/g);
+      boldParts.forEach((part, j) => {
+        if (!part) return;
+        if (j % 2 === 1) {
+          nodes.push(<strong key={`${keyBase}-b${i}-${j}`}>{part}</strong>);
+          return;
+        }
+        const italicParts = part.split(/\*([^*]+)\*/g);
+        italicParts.forEach((seg, k) => {
+          if (!seg) return;
+          nodes.push(k % 2 === 1 ? <em key={`${keyBase}-i${i}-${j}-${k}`}>{seg}</em> : seg);
+        });
+      });
+    }
+    if (i + 2 < linkParts.length) {
+      nodes.push(
+        <a
+          key={`${keyBase}-a${i}`}
+          href={linkParts[i + 2]}
+          target="_blank"
+          rel="noreferrer"
+          style={{ color: "inherit", fontWeight: 600, textDecoration: "underline" }}
+        >
+          {linkParts[i + 1]}
+        </a>,
+      );
+    }
+  }
+  return nodes;
+}
+
+/** Assistant replies arrive as markdown; render bullets, links and bold instead of raw symbols. */
+function renderRich(text: string) {
+  return text.split("\n").map((line, i) => {
+    const bullet = line.match(/^\s*[*-]\s+(.*)$/);
+    const content = renderInline(bullet ? bullet[1] : line, `l${i}`);
+    return (
+      <span key={i} style={{ display: "block", paddingLeft: bullet ? 14 : 0 }}>
+        {bullet && <span style={{ marginRight: 8 }}>&bull;</span>}
+        {content}
+      </span>
+    );
+  });
+}
+
 export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [pendingSummary, setPendingSummary] = useState<OrderSummary | null>(null);
+  const [pendingMenu, setPendingMenu] = useState<MenuCard | null>(null);
+  const [picked, setPicked] = useState<Record<string, number>>({});
+  const [queued, setQueued] = useState<string | null>(null);
   const [recording, setRecording] = useState(false);
   const [recordSeconds, setRecordSeconds] = useState(0);
   const [transcribing, setTranscribing] = useState(false);
@@ -69,13 +208,29 @@ export default function ChatPage() {
   const recordTimerRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const token = typeof window !== "undefined" ? localStorage.getItem("access_token") ?? "" : "";
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
   useEffect(() => () => clearInterval(recordTimerRef.current), []);
+
+  // When the assistant finishes: send anything the user typed meanwhile, keep focus in the box.
+  useEffect(() => {
+    if (streaming) return;
+    inputRef.current?.focus();
+    if (queued) {
+      const text = queued;
+      setQueued(null);
+      send(text);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [streaming]);
+
+  function signOut() {
+    clearTokens();
+    window.location.href = "/login";
+  }
 
   async function send(text: string) {
     if (!text.trim() || streaming) return;
@@ -93,9 +248,9 @@ export default function ChatPage() {
     };
 
     try {
-      const res = await fetch(`${API}/chat/stream`, {
+      // apiFetch refreshes the access token and retries once on 401 (15-min expiry).
+      const res = await apiFetch(`/chat/stream`, {
         method: "POST",
-        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
         body: JSON.stringify({ messages: next }),
       });
 
@@ -164,9 +319,8 @@ export default function ChatPage() {
   async function confirmOrder() {
     if (!pendingSummary) return;
     const draft = { ...pendingSummary.draft, confirm: true };
-    const res = await fetch(`${API}/orders`, {
+    const res = await apiFetch(`/orders`, {
       method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
       body: JSON.stringify(draft),
     });
     const body = await res.json();
@@ -252,11 +406,7 @@ export default function ChatPage() {
     try {
       const data = new FormData();
       data.append("audio", blob, "voice.webm");
-      const res = await fetch(`${API}/chat/transcribe`, {
-        method: "POST",
-        headers: { authorization: `Bearer ${token}` },
-        body: data,
-      });
+      const res = await apiFetch(`/chat/transcribe`, { method: "POST", body: data });
       if (!res.ok) {
         setVoiceNotice("Could not transcribe that — try again or type instead.");
         return;
@@ -267,7 +417,9 @@ export default function ChatPage() {
         return;
       }
       if (body.confidence >= CONFIDENCE_THRESHOLD) {
-        send(body.transcript);
+        // Same queue rule as typed text: never lost if the assistant is mid-stream.
+        if (streaming) setQueued(body.transcript);
+        else send(body.transcript);
       } else {
         setInput(body.transcript);
         setVoiceNotice("I'm not sure I heard that right — check the text below, then send.");
@@ -276,6 +428,9 @@ export default function ChatPage() {
       setTranscribing(false);
     }
   }
+
+  const lastMessage = messages[messages.length - 1];
+  const showTyping = streaming && (!lastMessage || lastMessage.role === "user" || !lastMessage.content);
 
   return (
     <main
@@ -568,77 +723,71 @@ export default function ChatPage() {
         <div ref={bottomRef} />
       </div>
 
-      {voiceNotice && (
-        <p role="status" style={{ margin: 0, padding: "6px 16px", fontSize: 13, color: "#92400e", background: "#fef3c7" }}>
-          {voiceNotice}
-        </p>
-      )}
-
-      <form
-        onSubmit={onSubmit}
-        style={{ padding: "12px 16px", borderTop: "1px solid #e5e7eb", display: "flex", gap: 8 }}
-      >
-        <input
-          aria-label="Message"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          disabled={streaming}
-          placeholder={
-            recording
-              ? "Listening…"
-              : transcribing
-                ? "Transcribing…"
-                : streaming
-                  ? "Assistant is typing…"
-                  : "Type a message…"
-          }
-          style={{
-            flex: 1,
-            padding: "10px 14px",
-            borderRadius: 24,
-            border: "1px solid #d1d5db",
-            fontSize: 15,
-            outline: "none",
-          }}
-        />
-        <button
-          type="button"
-          onClick={recording ? stopRecording : startRecording}
-          disabled={streaming || transcribing}
-          aria-label={recording ? "Stop recording" : "Record a voice message"}
-          aria-pressed={recording}
-          style={{
-            background: recording ? "#dc2626" : "#f3f4f6",
-            color: recording ? "#fff" : "#111",
-            border: "1px solid #d1d5db",
-            borderRadius: 24,
-            padding: "10px 14px",
-            cursor: "pointer",
-            fontWeight: 600,
-            fontVariantNumeric: "tabular-nums",
-            opacity: streaming || transcribing ? 0.5 : 1,
-          }}
-        >
-          {recording ? `⏹ 0:${String(recordSeconds).padStart(2, "0")}` : transcribing ? "…" : "🎤"}
-        </button>
-        <button
-          type="submit"
-          disabled={streaming || !input.trim()}
-          aria-label="Send"
-          style={{
-            background: "#2563eb",
-            color: "#fff",
-            border: "none",
-            borderRadius: 24,
-            padding: "10px 20px",
-            cursor: "pointer",
-            fontWeight: 600,
-            opacity: streaming || !input.trim() ? 0.5 : 1,
-          }}
-        >
-          Send
-        </button>
-      </form>
+      <div style={{ marginTop: "auto" }}>
+        {queued && (
+          <p
+            aria-live="polite"
+            style={{
+              fontSize: 13,
+              color: "var(--text-3)",
+              margin: "0 0 6px",
+              paddingLeft: 22,
+            }}
+          >
+            Will send when the assistant finishes: &ldquo;{queued}&rdquo;
+          </p>
+        )}
+        {voiceNotice && (
+          <p
+            role="status"
+            style={{
+              fontSize: 13,
+              color: "#92400e",
+              background: "#fef3c7",
+              borderRadius: 10,
+              padding: "6px 12px",
+              margin: "0 0 6px",
+            }}
+          >
+            {voiceNotice}
+          </p>
+        )}
+        <form onSubmit={onSubmit} className="chat-dock" style={{ marginBottom: 14 }}>
+          <input
+            ref={inputRef}
+            aria-label="Message"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            autoFocus
+            placeholder={
+              recording
+                ? "Listening…"
+                : transcribing
+                  ? "Transcribing…"
+                  : "Ask for a dish, a cuisine, or a kitchen"
+            }
+          />
+          <button
+            type="button"
+            onClick={recording ? stopRecording : startRecording}
+            disabled={transcribing}
+            aria-label={recording ? "Stop recording" : "Record a voice message"}
+            aria-pressed={recording}
+            className="btn btn-ghost"
+            style={{
+              padding: "8px 12px",
+              borderRadius: 999,
+              fontVariantNumeric: "tabular-nums",
+              ...(recording ? { background: "#dc2626", color: "#fff" } : {}),
+            }}
+          >
+            {recording ? `⏹ 0:${String(recordSeconds).padStart(2, "0")}` : transcribing ? "…" : "🎤"}
+          </button>
+          <button type="submit" disabled={!input.trim()} aria-label="Send" className="send-orb">
+            &#8599;
+          </button>
+        </form>
+      </div>
     </main>
   );
 }

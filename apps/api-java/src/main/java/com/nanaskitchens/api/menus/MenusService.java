@@ -322,9 +322,10 @@ public class MenusService {
                         new MenuDayResponse.Dish(
                                 rs.getString("dishId"),
                                 rs.getString("dish_kitchen_id"),
-                                rs.getString("name"),
-                                rs.getString("description"),
-                                rs.getString("photo"),
+                               rs.getString("name"),
+                               rs.getString("description"),
+                               rs.getString("photo"),
+                                null,
                                 rs.getInt("priceCents"),
                                 stringList(rs, "dietaryTags"))))
                 .list();
@@ -349,6 +350,7 @@ public class MenusService {
                 rs.getString("name"),
                 rs.getString("description"),
                 rs.getString("photo"),
+                null,
                 rs.getInt("priceCents"),
                 stringList(rs, "dietaryTags"));
     }

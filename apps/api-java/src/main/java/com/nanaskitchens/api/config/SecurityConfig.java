@@ -42,7 +42,7 @@ public class SecurityConfig {
                         // here aborts the committed response mid-stream.
                         .dispatcherTypeMatchers(jakarta.servlet.DispatcherType.ASYNC)
                         .permitAll()
-                        .requestMatchers("/health", "/error", "/auth/register", "/auth/login", "/auth/refresh")
+                        .requestMatchers("/", "/health", "/error", "/auth/register", "/auth/login", "/auth/refresh")
                         .permitAll()
                         // search / public profile / published menu are public, like the NestJS service;
                         // seller endpoints under /kitchens/{id}/... (dishes, menu-days) stay authenticated
@@ -67,17 +67,6 @@ public class SecurityConfig {
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration config = new CorsConfiguration();
         config.setAllowedOriginPatterns(corsAllowedOriginPatterns);
-        config.setAllowedMethods(List.of("GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"));
-        config.setAllowedHeaders(List.of("Authorization", "Content-Type"));
-        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
-        source.registerCorsConfiguration("/**", config);
-        return source;
-    }
-
-    @Bean
-    public CorsConfigurationSource corsConfigurationSource() {
-        CorsConfiguration config = new CorsConfiguration();
-        config.setAllowedOrigins(List.of(webOrigin));
         config.setAllowedMethods(List.of("GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"));
         config.setAllowedHeaders(List.of("Authorization", "Content-Type"));
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();

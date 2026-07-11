@@ -1,6 +1,7 @@
 package com.nanaskitchens.api.orders;
 
 import com.nanaskitchens.api.delivery.DeliveryService;
+import com.nanaskitchens.api.delivery.GeocodingService;
 import com.nanaskitchens.api.inventory.InventoryService;
 import com.nanaskitchens.api.inventory.PortionsChanged;
 import com.nanaskitchens.api.kitchens.AddressCrypto;
@@ -35,6 +36,9 @@ import tools.jackson.databind.json.JsonMapper;
 public class OrdersService {
 
     private static final double COMMISSION_RATE = 0.15;
+    private static final int DELIVERY_FEE_CENTS = 399;
+    private static final double DELIVERY_RADIUS_MILES = 10;
+    private static final double METERS_PER_MILE = 1609.344;
     private static final Set<String> FINAL_STATUSES = Set.of("completed", "cancelled");
 
     /** Story 4.1 seller transitions: current status -> allowed next statuses. */
@@ -50,6 +54,7 @@ public class OrdersService {
     private final JsonMapper jsonMapper;
     private final org.springframework.context.ApplicationEventPublisher eventPublisher;
     private final DeliveryService deliveryService;
+    private final GeocodingService geocoding;
     private final PaymentProvider payments;
     private final NotificationsService notifications;
 
@@ -60,6 +65,7 @@ public class OrdersService {
             JsonMapper jsonMapper,
             org.springframework.context.ApplicationEventPublisher eventPublisher,
             DeliveryService deliveryService,
+            GeocodingService geocoding,
             PaymentProvider payments,
             NotificationsService notifications) {
         this.db = db;
@@ -68,6 +74,7 @@ public class OrdersService {
         this.jsonMapper = jsonMapper;
         this.eventPublisher = eventPublisher;
         this.deliveryService = deliveryService;
+        this.geocoding = geocoding;
         this.payments = payments;
         this.notifications = notifications;
     }
@@ -126,10 +133,13 @@ public class OrdersService {
             checkDeliveryRadius(input.kitchenId(), deliveryAddress);
         }
 
-        int totalCents = input.items().stream()
+        int foodSubtotalCents = input.items().stream()
                 .mapToInt(it -> valid.get(it.menuItemId()).priceCents() * it.qty())
                 .sum();
-        int commissionCents = (int) Math.round(totalCents * COMMISSION_RATE);
+        int deliveryFeeCents = isDelivery ? DELIVERY_FEE_CENTS : 0;
+        int courierTipCents = isDelivery ? input.courierTipCents() : 0;
+        int totalCents = foodSubtotalCents + deliveryFeeCents + courierTipCents;
+        int commissionCents = (int) Math.round(foodSubtotalCents * COMMISSION_RATE);
 
         OrderSummary summary = new OrderSummary(
                 input.kitchenId(),
@@ -143,6 +153,9 @@ public class OrdersService {
                 input.readySlot(),
                 input.fulfillment(),
                 isDelivery ? deliveryAddress : null,
+                foodSubtotalCents,
+                deliveryFeeCents,
+                courierTipCents,
                 totalCents);
 
         if (!input.confirm()) {
@@ -153,7 +166,6 @@ public class OrdersService {
         // The PaymentIntent is created inside the same transaction on purpose: a provider
         // failure rolls everything back, which IS the compensating restore of Story 3.3 AC3.
         String orderId = UUID.randomUUID().toString();
-        String idempotencyKey = UUID.randomUUID().toString(); // doubles as Stripe idempotency key (Story 3.4)
         for (CreateOrderRequest.Item item : input.items()) {
             inventory.decrement(item.menuItemId(), item.qty());
         }
@@ -165,10 +177,10 @@ public class OrdersService {
         db.sql("""
                 INSERT INTO "Order"
                   (id, "buyerId", "kitchenId", "menuDayId", status, "readySlot", fulfillment,
-                   "totalCents", "commissionCents", "paymentIntentId", "idempotencyKey")
+                   "totalCents", "commissionCents", "deliveryFeeCents", "tipCents", "paymentIntentId", "idempotencyKey")
                 VALUES
                   (:id, :buyerId, :kitchenId, :menuDayId, :status, :readySlot, :fulfillment,
-                   :totalCents, :commissionCents, :paymentIntentId, :idempotencyKey)
+                   :totalCents, :commissionCents, :deliveryFeeCents, :tipCents, :paymentIntentId, :idempotencyKey)
                 """)
                 .param("id", orderId)
                 .param("buyerId", buyerId)
@@ -179,6 +191,8 @@ public class OrdersService {
                 .param("fulfillment", input.fulfillment())
                 .param("totalCents", totalCents)
                 .param("commissionCents", commissionCents)
+                .param("deliveryFeeCents", deliveryFeeCents)
+                .param("tipCents", courierTipCents)
                 .param("paymentIntentId", intent.id())
                 .param("idempotencyKey", idempotencyKey)
                 .update();
@@ -194,20 +208,6 @@ public class OrdersService {
                     .param("unitPriceCents", valid.get(item.menuItemId()).priceCents())
                     .update();
         }
-        // Story 3.4: charge inside the transaction — a failed payment rolls everything back.
-        String paymentIntentId = payments.charge(totalCents, idempotencyKey, orderId);
-        if (paymentIntentId != null) {
-            db.sql("UPDATE \"Order\" SET \"paymentIntentId\" = :pi WHERE id = :id")
-                    .param("pi", paymentIntentId)
-                    .param("id", orderId)
-                    .update();
-        }
-
-        // Story 4.2 (dev slice): delivery orders get a courier job right away.
-        if ("delivery".equals(input.fulfillment())) {
-            delivery.createJob(orderId);
-        }
-
         db.sql("""
                 INSERT INTO "AuditLog" (id, actor, entity, action, "after")
                 VALUES (:id, :actor, :entity, 'create', :after::jsonb)
@@ -298,12 +298,9 @@ public class OrdersService {
                 LocalDateTime createdAt, String kitchenName, String addressEncrypted) {
         }
         OrderRow order = db.sql("""
-                SELECT o.*, k.name AS kitchen_name, k."addressEncrypted",
-                       dj.provider::text AS delivery_provider, dj.status AS delivery_status,
-                       dj."trackingUrl", dj."feeCents" AS delivery_fee_cents
+                SELECT o.*, k.name AS kitchen_name, k."addressEncrypted"
                 FROM "Order" o
                 JOIN "Kitchen" k ON k.id = o."kitchenId"
-                LEFT JOIN "DeliveryJob" dj ON dj."orderId" = o.id
                 WHERE o.id = :id
                 """)
                 .param("id", orderId)
@@ -318,9 +315,7 @@ public class OrdersService {
                                 : rs.getTimestamp("refundedAt").toLocalDateTime(),
                         rs.getString("idempotencyKey"),
                         rs.getTimestamp("createdAt").toLocalDateTime(),
-                        rs.getString("kitchen_name"), rs.getString("addressEncrypted"),
-                        rs.getString("delivery_provider"), rs.getString("delivery_status"),
-                        rs.getString("trackingUrl"), rs.getObject("delivery_fee_cents", Integer.class)))
+                        rs.getString("kitchen_name"), rs.getString("addressEncrypted")))
                 .optional()
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
         if (!order.buyerId().equals(buyerId)) {
@@ -521,6 +516,47 @@ public class OrdersService {
                     row.put("deliveryProvider", rs.getString("delivery_provider"));
                     row.put("deliveryStatus", rs.getString("delivery_status"));
                     row.put("deliveryTrackingUrl", rs.getString("delivery_tracking_url"));
+                    return row;
+                })
+                .list();
+    }
+
+    /** Buyer order history — mirrors listForKitchen but scoped to the buyer's own orders. */
+    public List<Map<String, Object>> listForBuyer(String buyerId, String status) {
+        return db.sql("""
+                SELECT o.id, o.status, o."readySlot", o.fulfillment, o."totalCents", o."createdAt",
+                       k.name AS kitchen_name, k."cuisineTag" AS cuisine_tag,
+                       dj."trackingUrl" AS delivery_tracking_url,
+                       (r.id IS NOT NULL) AS reviewed,
+                       (SELECT string_agg(d.name || ' x' || oi.qty, ', ' ORDER BY d.name)
+                        FROM "OrderItem" oi
+                        JOIN "MenuItem" mi ON mi.id = oi."menuItemId"
+                        JOIN "Dish" d ON d.id = mi."dishId"
+                        WHERE oi."orderId" = o.id) AS items_summary
+                FROM "Order" o
+                JOIN "Kitchen" k ON k.id = o."kitchenId"
+                LEFT JOIN "DeliveryJob" dj ON dj."orderId" = o.id
+                LEFT JOIN "Review" r ON r."orderId" = o.id
+                WHERE o."buyerId" = :buyerId
+                  AND (:status::text IS NULL OR o.status::text = :status)
+                ORDER BY o."createdAt" DESC
+                LIMIT 200
+                """)
+                .param("buyerId", buyerId)
+                .param("status", status, java.sql.Types.VARCHAR)
+                .query((rs, n) -> {
+                    Map<String, Object> row = new LinkedHashMap<>();
+                    row.put("id", rs.getString("id"));
+                    row.put("status", rs.getString("status"));
+                    row.put("readySlot", rs.getTimestamp("readySlot").toLocalDateTime());
+                    row.put("fulfillment", rs.getString("fulfillment"));
+                    row.put("totalCents", rs.getInt("totalCents"));
+                    row.put("createdAt", rs.getTimestamp("createdAt").toLocalDateTime());
+                    row.put("kitchenName", rs.getString("kitchen_name"));
+                    row.put("cuisineTag", rs.getString("cuisine_tag"));
+                    row.put("itemsSummary", rs.getString("items_summary"));
+                    row.put("deliveryTrackingUrl", rs.getString("delivery_tracking_url"));
+                    row.put("reviewed", rs.getBoolean("reviewed"));
                     return row;
                 })
                 .list();
