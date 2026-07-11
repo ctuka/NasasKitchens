@@ -1,8 +1,10 @@
 # Architecture Document: Nanas' Kitchens
 
 ## Overview & Diagram
-A modular monolith API (NestJS) backed by PostgreSQL/PostGIS, fronted by a Next.js web
-app and React Native mobile app. A first-party **MCP server** is a thin adapter over the
+A modular monolith API (Spring Boot 4 / Java 21, migrated from the original NestJS
+implementation which remains as reference) backed by PostgreSQL/PostGIS, fronted by a
+Next.js web app and a Kotlin Multiplatform mobile app (Compose Multiplatform, one shared
+codebase for iOS + Android). A first-party **MCP server** is a thin adapter over the
 same application services the REST API uses (NFR3) — the in-app agent and external LLM
 clients both transact through it. Delivery is abstracted behind a provider interface
 with DoorDash Drive and Grubhub implementations. Stripe Connect handles payments/payouts.
@@ -10,7 +12,7 @@ with DoorDash Drive and Grubhub implementations. Stripe Connect handles payments
 ```mermaid
 graph LR
   subgraph Clients
-    W[Next.js Web] --- M[React Native App]
+    W[Next.js Web] --- M[KMP Mobile: iOS + Android]
     AG[In-app Agent: chat+voice] 
     EXT[External LLM clients]
   end
@@ -19,7 +21,7 @@ graph LR
   AG -->|MCP| MCP[MCP Server]
   EXT -->|MCP + OAuth| MCP
   MCP --> SVC
-  API[API Gateway / NestJS] --> SVC[Application Services]
+  API[API Gateway / Spring Boot] --> SVC[Application Services]
   SVC --> DB[(PostgreSQL + PostGIS)]
   SVC --> RD[(Redis: cache, locks, queues)]
   SVC --> S3[(Object storage: photos, reports, audio)]
@@ -34,12 +36,12 @@ graph LR
 ## Tech Stack
 | Layer | Choice | Version | Why |
 |---|---|---|---|
-| Backend | NestJS (Node 22, TypeScript 5) | 11.x | Modular monolith, DI, testability |
+| Backend | Spring Boot (Java 21) — apps/api-java | 4.1 | Modular monolith, DI, testability; NestJS original kept as reference |
 | DB | PostgreSQL + PostGIS | 16 / 3.4 | Relational integrity + native geo radius (NFR2) |
 | Cache/locks/queue | Redis + BullMQ | 7.x | Idempotency, webhooks, notifications |
 | Web | Next.js | 15 | SSR for SEO on kitchen pages |
-| Mobile | React Native (Expo) | SDK 53 | One codebase, push support |
-| Agent LLM | Claude API (tool use) | messages v1 | Conversational ordering, FR12/FR15 |
+| Mobile | Kotlin Multiplatform + Compose Multiplatform | Kotlin 2.x | One shared Kotlin codebase for iOS + Android (UI, domain, networking); native performance, push support |
+| Agent LLM | Spring AI + Claude API (tool calling) | Spring AI 2.0 | Conversational ordering, FR12/FR15 |
 | MCP | @modelcontextprotocol/sdk (TS) | 1.x | First-party tool surface, FR14 |
 | STT | OpenAI Whisper API (or Deepgram) | — | Fast multilingual voice (NFR4, NFR9) |
 | Payments | Stripe Connect (Express) | 2025 API | PCI delegation (NFR6), payouts FR21 |
@@ -135,12 +137,14 @@ rate limiting on MCP tools; cottage-food attestation stored with timestamp + IP.
 ```
 culture-eats/
 ├── apps/
-│   ├── api/            # NestJS modules: auth, kitchens, menus, inventory, orders,
-│   │                   # delivery, payments, community, trust, notifications, audit
-│   ├── mcp-server/     # MCP adapter over api services (same monorepo package imports)
-│   ├── agent/          # chat/voice orchestration (Claude + STT)
+│   ├── api-java/       # Spring Boot 4 + Spring AI: auth, kitchens, menus, inventory,
+│   │                   # orders, delivery, chat agent (payments, community, trust TBD)
+│   ├── api/            # legacy NestJS implementation (reference during migration)
+│   ├── mcp-server/     # MCP adapter over the REST API
 │   ├── web/            # Next.js buyer + seller + inspector portals
-│   └── mobile/         # Expo app
+│   └── mobile/         # Kotlin Multiplatform app
+│                       #   composeApp/ (shared Compose UI) + androidApp/ + iosApp/
+│                       #   shared/ (domain models, REST/SSE client via Ktor)
 ├── packages/
 │   ├── core/           # domain services, entities, shared types
 │   └── providers/      # delivery/{doordash,grubhub,mock}, stt, payments

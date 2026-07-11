@@ -16,6 +16,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createServer, IncomingMessage, ServerResponse } from "node:http";
 import { z } from "zod";
+import { handleOAuth, setCors } from "./oauth.js";
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
@@ -277,15 +278,39 @@ async function runStdio(): Promise<void> {
 }
 
 function runHttp(): void {
+  const port = process.env.MCP_PORT ?? 3002;
+  const baseUrl = process.env.MCP_BASE_URL ?? `http://localhost:${port}`;
+
   createServer(async (req: IncomingMessage, res: ServerResponse) => {
+    setCors(res);
+    if (req.method === "OPTIONS") {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+
+    // Story 5.4 (FR14): OAuth 2.1 endpoints live beside the MCP transport.
+    if (await handleOAuth(req, res, baseUrl, API_URL)) return;
+
+    // No bearer → 401 with resource metadata so MCP clients start the OAuth flow.
     const token = (req.headers.authorization ?? "").replace(/^Bearer\s+/i, "");
+    if (!token) {
+      res.writeHead(401, {
+        "content-type": "application/json",
+        "WWW-Authenticate":
+          `Bearer resource_metadata="${baseUrl}/.well-known/oauth-protected-resource"`,
+      });
+      res.end(JSON.stringify({ error: "unauthorized", error_description: "Bearer token required" }));
+      return;
+    }
+
     const server = buildServer(() => token);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     res.on("close", () => transport.close());
     await server.connect(transport);
     await transport.handleRequest(req, res);
-  }).listen(process.env.MCP_PORT ?? 3002, () =>
-    process.stderr.write(`CulturEats MCP server on :${process.env.MCP_PORT ?? 3002}\n`),
+  }).listen(port, () =>
+    process.stderr.write(`CulturEats MCP server on :${port} (OAuth 2.1 enabled)\n`),
   );
 }
 

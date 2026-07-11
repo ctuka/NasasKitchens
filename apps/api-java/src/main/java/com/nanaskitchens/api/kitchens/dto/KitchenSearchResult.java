@@ -8,5 +8,7 @@ public record KitchenSearchResult(
         double distanceMiles,
         Double ratingAvg,
         Integer hygieneScore,
-        int portionsLeftToday) {
+        int portionsLeftToday,
+        /** Cover image: kitchen's own photo, else the freshest dish photo (cards look tasty, not flags). */
+        String photo) {
 }

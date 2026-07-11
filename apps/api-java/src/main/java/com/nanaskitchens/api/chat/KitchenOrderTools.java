@@ -37,16 +37,41 @@ public class KitchenOrderTools {
         this.buyerId = buyerId;
     }
 
-    @Tool(description = "Search for kitchens within 10 miles. Returns list with name, cuisine, distance, portions left.")
-    public String searchKitchens(double lat, double lng, @ToolParam(required = false) String cuisine) {
+    @Tool(description = "Search for kitchens within 10 miles. Give either lat/lng coordinates or a city/postal-code location (for example 43065). Returns name, cuisine, distance, and live portions left.")
+    public String searchKitchens(
+            Double lat,
+            Double lng,
+            @ToolParam(required = false, description = "A city, address, or postal code supplied by the buyer, such as 43065. Use this when lat/lng are not available.")
+                    String location,
+            @ToolParam(
+                            required = false,
+                            description = "Exact tag, one of: turkish, chinese, mexican, indian, italian, "
+                                    + "japanese, korean, vietnamese, lebanese, ethiopian, persian, greek, thai, "
+                                    + "other. Map the user's language to these tags (e.g. \"Türk mutfağı\" -> turkish). "
+                                    + "Omit to list all cuisines.")
+                    String cuisine) {
+        if (lat != null && lng != null) {
+            return guarded(() -> kitchens.search(lat, lng, cuisine));
+        }
+        if (location != null && !location.isBlank()) {
+            return guarded(() -> kitchens.searchByLocation(location, cuisine));
+        }
+        if (lat == null || lng == null) {
+            return jsonMapper.writeValueAsString(Map.of(
+                    "error", "LOCATION_REQUIRED",
+                    "message", "Ask the user for their city or coordinates, then search again."));
+        }
         return guarded(() -> kitchens.search(lat, lng, cuisine));
     }
 
     @Tool(description = "Get the published daily menu for a kitchen.")
     public String getMenu(
-            String kitchenId,
-            @ToolParam(required = false, description = "ISO date string, defaults to today") String date) {
-        return guarded(() -> kitchens.publishedMenu(kitchenId, date));
+            @ToolParam(description = "The kitchen's UUID from searchKitchens results; the exact kitchen name also works")
+                    String kitchenId,
+            @ToolParam(required = false, description = "ISO date string (YYYY-MM-DD), defaults to today") String date) {
+        // The chat UI only carries text across turns, so the model often has the kitchen NAME
+        // but not the UUID from an earlier turn. Resolve names to ids instead of failing.
+        return guarded(() -> kitchens.publishedMenu(kitchens.resolveKitchenId(kitchenId), date));
     }
 
     @Tool(description = "Check live remaining portions for a list of menu item IDs.")
@@ -58,7 +83,9 @@ public class KitchenOrderTools {
             description =
                     "Create an order. With confirm=false returns a priced summary only (FR15). "
                             + "Call with confirm=false first, show summary to user, then call with confirm=true "
-                            + "after explicit confirmation.")
+                            + "after explicit confirmation. menuDayId and menuItemId values must come from a "
+                            + "fresh getMenu call. readySlot is the pickup/delivery time as ISO datetime "
+                            + "(e.g. 2026-07-10T17:00:00Z) or HH:mm for today (e.g. 17:00).")
     public String createOrder(CreateOrderRequest input) {
         return guarded(() -> orders.place(buyerId, input));
     }
@@ -81,6 +108,12 @@ public class KitchenOrderTools {
             return jsonMapper.writeValueAsString(Map.of(
                     "error", e.getReason() != null ? e.getReason() : "ERROR",
                     "status", e.getStatusCode().value()));
+        } catch (RuntimeException e) {
+            // e.g. a stale/guessed UUID hitting a uuid column. Give the model something it can
+            // recover from (re-fetch ids and retry) instead of aborting the tool call.
+            return jsonMapper.writeValueAsString(Map.of(
+                    "error", "TOOL_ERROR",
+                    "message", "Invalid or stale ids. Call searchKitchens and getMenu again to refresh, then retry."));
         }
     }
 }

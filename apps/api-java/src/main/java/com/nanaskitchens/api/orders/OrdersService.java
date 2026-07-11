@@ -1,7 +1,12 @@
 package com.nanaskitchens.api.orders;
 
+import com.nanaskitchens.api.delivery.DeliveryService;
+import com.nanaskitchens.api.delivery.GeocodingService;
 import com.nanaskitchens.api.inventory.InventoryService;
+import com.nanaskitchens.api.inventory.PortionsChanged;
 import com.nanaskitchens.api.kitchens.AddressCrypto;
+import com.nanaskitchens.api.notifications.NotificationsService;
+import com.nanaskitchens.api.payments.PaymentProvider;
 import com.nanaskitchens.api.kitchens.dto.MenuDayResponse;
 import com.nanaskitchens.api.orders.dto.CreateOrderRequest;
 import com.nanaskitchens.api.orders.dto.OrderDetailResponse;
@@ -31,19 +36,47 @@ import tools.jackson.databind.json.JsonMapper;
 public class OrdersService {
 
     private static final double COMMISSION_RATE = 0.15;
+    private static final int DELIVERY_FEE_CENTS = 399;
+    private static final double DELIVERY_RADIUS_MILES = 10;
+    private static final double METERS_PER_MILE = 1609.344;
     private static final Set<String> FINAL_STATUSES = Set.of("completed", "cancelled");
+
+    /** Story 4.1 seller transitions: current status -> allowed next statuses. */
+    private static final Map<String, Set<String>> SELLER_TRANSITIONS = Map.of(
+            "confirmed", Set.of("accepted", "declined"),
+            "accepted", Set.of("preparing"),
+            "preparing", Set.of("ready"),
+            "ready", Set.of("completed"));
 
     private final JdbcClient db;
     private final InventoryService inventory;
     private final AddressCrypto addressCrypto;
     private final JsonMapper jsonMapper;
+    private final org.springframework.context.ApplicationEventPublisher eventPublisher;
+    private final DeliveryService deliveryService;
+    private final GeocodingService geocoding;
+    private final PaymentProvider payments;
+    private final NotificationsService notifications;
 
     public OrdersService(
-            JdbcClient db, InventoryService inventory, AddressCrypto addressCrypto, JsonMapper jsonMapper) {
+            JdbcClient db,
+            InventoryService inventory,
+            AddressCrypto addressCrypto,
+            JsonMapper jsonMapper,
+            org.springframework.context.ApplicationEventPublisher eventPublisher,
+            DeliveryService deliveryService,
+            GeocodingService geocoding,
+            PaymentProvider payments,
+            NotificationsService notifications) {
         this.db = db;
         this.inventory = inventory;
         this.addressCrypto = addressCrypto;
         this.jsonMapper = jsonMapper;
+        this.eventPublisher = eventPublisher;
+        this.deliveryService = deliveryService;
+        this.geocoding = geocoding;
+        this.payments = payments;
+        this.notifications = notifications;
     }
 
     /**
@@ -85,10 +118,28 @@ public class OrdersService {
             }
         }
 
-        int totalCents = input.items().stream()
+        // FR9/NFR5: delivery needs a drop-off address (validated up front so the agent can
+        // ask the buyer before any inventory or payment side effects happen).
+        boolean isDelivery = "delivery".equals(input.fulfillment());
+        String deliveryAddress =
+                input.deliveryAddress() == null || input.deliveryAddress().isBlank()
+                        ? null
+                        : input.deliveryAddress().trim();
+        if (isDelivery && deliveryAddress == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "ADDRESS_REQUIRED: delivery orders need deliveryAddress (street, city)");
+        }
+        if (isDelivery) {
+            checkDeliveryRadius(input.kitchenId(), deliveryAddress);
+        }
+
+        int foodSubtotalCents = input.items().stream()
                 .mapToInt(it -> valid.get(it.menuItemId()).priceCents() * it.qty())
                 .sum();
-        int commissionCents = (int) Math.round(totalCents * COMMISSION_RATE);
+        int deliveryFeeCents = isDelivery ? DELIVERY_FEE_CENTS : 0;
+        int courierTipCents = isDelivery ? input.courierTipCents() : 0;
+        int totalCents = foodSubtotalCents + deliveryFeeCents + courierTipCents;
+        int commissionCents = (int) Math.round(foodSubtotalCents * COMMISSION_RATE);
 
         OrderSummary summary = new OrderSummary(
                 input.kitchenId(),
@@ -101,35 +152,49 @@ public class OrdersService {
                         .toList(),
                 input.readySlot(),
                 input.fulfillment(),
+                isDelivery ? deliveryAddress : null,
+                foodSubtotalCents,
+                deliveryFeeCents,
+                courierTipCents,
                 totalCents);
 
         if (!input.confirm()) {
             return Map.of("confirmed", false, "summary", summary); // FR15: summary first, no side effects
         }
 
-        // Atomic: decrement + order in one transaction (Story 2.3 / architecture Workflow 1)
+        // Atomic: decrement + order in one transaction (Story 2.3 / architecture Workflow 1).
+        // The PaymentIntent is created inside the same transaction on purpose: a provider
+        // failure rolls everything back, which IS the compensating restore of Story 3.3 AC3.
         String orderId = UUID.randomUUID().toString();
         for (CreateOrderRequest.Item item : input.items()) {
             inventory.decrement(item.menuItemId(), item.qty());
         }
+        String idempotencyKey = UUID.randomUUID().toString(); // doubles as the Stripe idempotency key
+        PaymentProvider.Intent intent = payments.createIntent(orderId, totalCents, idempotencyKey);
+        // mock settles instantly → confirmed (pre-3.4 behaviour); stripe stays pending until
+        // the webhook lands (detail() already withholds the pickup address while pending).
+        boolean paid = "succeeded".equals(intent.status());
         db.sql("""
                 INSERT INTO "Order"
                   (id, "buyerId", "kitchenId", "menuDayId", status, "readySlot", fulfillment,
-                   "totalCents", "commissionCents", "idempotencyKey")
+                   "totalCents", "commissionCents", "deliveryFeeCents", "tipCents", "paymentIntentId", "idempotencyKey")
                 VALUES
-                  (:id, :buyerId, :kitchenId, :menuDayId, 'confirmed', :readySlot, :fulfillment,
-                   :totalCents, :commissionCents, :idempotencyKey)
+                  (:id, :buyerId, :kitchenId, :menuDayId, :status, :readySlot, :fulfillment,
+                   :totalCents, :commissionCents, :deliveryFeeCents, :tipCents, :paymentIntentId, :idempotencyKey)
                 """)
                 .param("id", orderId)
                 .param("buyerId", buyerId)
                 .param("kitchenId", input.kitchenId())
                 .param("menuDayId", input.menuDayId())
+                .param("status", paid ? "confirmed" : "pending")
                 .param("readySlot", parseReadySlot(input.readySlot()))
                 .param("fulfillment", input.fulfillment())
                 .param("totalCents", totalCents)
                 .param("commissionCents", commissionCents)
-                // becomes the Stripe draft id in Story 3.4
-                .param("idempotencyKey", UUID.randomUUID().toString())
+                .param("deliveryFeeCents", deliveryFeeCents)
+                .param("tipCents", courierTipCents)
+                .param("paymentIntentId", intent.id())
+                .param("idempotencyKey", idempotencyKey)
                 .update();
         for (CreateOrderRequest.Item item : input.items()) {
             db.sql("""
@@ -153,19 +218,89 @@ public class OrdersService {
                 .param("after", jsonMapper.writeValueAsString(summary))
                 .update();
 
-        return Map.of("confirmed", true, "order", detail(buyerId, orderId));
+        // Delivered AFTER_COMMIT: SSE subscribers see the new counts only once they're durable.
+        eventPublisher.publishEvent(
+                new PortionsChanged(input.items().stream().map(CreateOrderRequest.Item::menuItemId).toList()));
+        if (paid) {
+            notifySellerNewOrder(orderId, input.kitchenId()); // FR22 — pending orders wait for markPaid
+            return Map.of("confirmed", true, "order", detail(buyerId, orderId));
+        }
+        // Client must confirm the PaymentIntent (Stripe Elements/PaymentSheet); the
+        // payment_intent.succeeded webhook then flips the order to confirmed.
+        Map<String, Object> payment = new LinkedHashMap<>();
+        payment.put("provider", payments.name());
+        payment.put("clientSecret", intent.clientSecret());
+        payment.put("publishableKey", payments.publishableKey());
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("confirmed", false);
+        result.put("requiresPayment", true);
+        result.put("orderId", orderId);
+        result.put("payment", payment);
+        return result;
+    }
+
+    /** FR22 — the seller learns about a (paid) order the moment it lands. */
+    public void notifySellerNewOrder(String orderId, String kitchenId) {
+        record Row(String sellerId, String fulfillment, String readySlot) {
+        }
+        Row row = db.sql("""
+                SELECT k."sellerId", o.fulfillment, to_char(o."readySlot", 'HH24:MI') AS ready_slot
+                FROM "Order" o JOIN "Kitchen" k ON k.id = o."kitchenId"
+                WHERE o.id = :orderId AND k.id = :kitchenId
+                """)
+                .param("orderId", orderId)
+                .param("kitchenId", kitchenId)
+                .query((rs, n) -> new Row(
+                        rs.getString("sellerId"), rs.getString("fulfillment"), rs.getString("ready_slot")))
+                .single();
+        notifications.notify(row.sellerId(), "order_placed", "New order",
+                "A " + row.fulfillment() + " order came in, ready time " + row.readySlot() + ".",
+                Map.of("orderId", orderId));
+    }
+
+    /**
+     * FR5's 10-mile radius applies to delivery drop-offs too. The address is geocoded with
+     * tiered fallbacks (dev: Nominatim) and measured against the kitchen's PostGIS point.
+     * If no variant of the address resolves, the order is rejected so the buyer can give a
+     * clearer address — never delivered blind.
+     */
+    private void checkDeliveryRadius(String kitchenId, String deliveryAddress) {
+        GeocodingService.Point point = geocoding.geocode(deliveryAddress);
+        if (point == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "ADDRESS_NOT_FOUND: could not locate this address on the map. Ask the buyer "
+                            + "for a clearer address including the town/city name.");
+        }
+        Double meters = db.sql("""
+                SELECT ST_Distance(geo, ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography)
+                FROM "Kitchen" WHERE id = :kitchenId AND geo IS NOT NULL
+                """)
+                .param("lng", point.lng())
+                .param("lat", point.lat())
+                .param("kitchenId", kitchenId)
+                .query(Double.class)
+                .optional()
+                .orElse(null);
+        if (meters != null && meters > DELIVERY_RADIUS_MILES * METERS_PER_MILE) {
+            double miles = Math.round(meters / METERS_PER_MILE * 10) / 10.0;
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "ADDRESS_OUT_OF_RANGE: drop-off is " + miles
+                            + " miles from the kitchen; delivery is limited to "
+                            + (int) DELIVERY_RADIUS_MILES + " miles. Offer pickup or a closer address.");
+        }
     }
 
     /** FR10: step-by-step address disclosure — street address only on a confirmed pickup order. */
     public OrderDetailResponse detail(String buyerId, String orderId) {
         record OrderRow(String id, String buyerId, String kitchenId, String menuDayId, String status,
                 LocalDateTime readySlot, String fulfillment, int totalCents, int commissionCents,
-                String paymentIntentId, String idempotencyKey, LocalDateTime createdAt,
-                String kitchenName, String addressEncrypted) {
+                String paymentIntentId, LocalDateTime refundedAt, String idempotencyKey,
+                LocalDateTime createdAt, String kitchenName, String addressEncrypted) {
         }
         OrderRow order = db.sql("""
                 SELECT o.*, k.name AS kitchen_name, k."addressEncrypted"
-                FROM "Order" o JOIN "Kitchen" k ON k.id = o."kitchenId"
+                FROM "Order" o
+                JOIN "Kitchen" k ON k.id = o."kitchenId"
                 WHERE o.id = :id
                 """)
                 .param("id", orderId)
@@ -174,7 +309,11 @@ public class OrdersService {
                         rs.getString("menuDayId"), rs.getString("status"),
                         rs.getTimestamp("readySlot").toLocalDateTime(), rs.getString("fulfillment"),
                         rs.getInt("totalCents"), rs.getInt("commissionCents"),
-                        rs.getString("paymentIntentId"), rs.getString("idempotencyKey"),
+                        rs.getString("paymentIntentId"),
+                        rs.getTimestamp("refundedAt") == null
+                                ? null
+                                : rs.getTimestamp("refundedAt").toLocalDateTime(),
+                        rs.getString("idempotencyKey"),
                         rs.getTimestamp("createdAt").toLocalDateTime(),
                         rs.getString("kitchen_name"), rs.getString("addressEncrypted")))
                 .optional()
@@ -186,7 +325,7 @@ public class OrdersService {
         List<OrderDetailResponse.Item> items = db.sql("""
                 SELECT oi.id, oi."orderId", oi."menuItemId", oi.qty, oi."unitPriceCents",
                        mi."menuDayId", mi."dishId", mi."portionsTotal", mi."portionsRemaining",
-                       d."kitchenId" AS dish_kitchen_id, d.name, d.description, d.photo,
+                       d."kitchenId" AS dish_kitchen_id, d.name, d.description, d.photo, d.calories,
                        d."priceCents", d."dietaryTags"
                 FROM "OrderItem" oi
                 JOIN "MenuItem" mi ON mi.id = oi."menuItemId"
@@ -212,6 +351,7 @@ public class OrdersService {
                                         rs.getString("name"),
                                         rs.getString("description"),
                                         rs.getString("photo"),
+                                        rs.getObject("calories", Integer.class),
                                         rs.getInt("priceCents"),
                                         stringList(rs, "dietaryTags")))))
                 .list();
@@ -222,9 +362,204 @@ public class OrdersService {
         return new OrderDetailResponse(
                 order.id(), order.buyerId(), order.kitchenId(), order.menuDayId(), order.status(),
                 order.readySlot(), order.fulfillment(), order.totalCents(), order.commissionCents(),
-                order.paymentIntentId(), order.idempotencyKey(), order.createdAt(), items,
-                order.kitchenName(),
-                discloseAddress ? addressCrypto.decrypt(order.addressEncrypted()) : null);
+                order.paymentIntentId(), order.refundedAt(), order.idempotencyKey(), order.createdAt(),
+                items, order.kitchenName(),
+                discloseAddress ? addressCrypto.decrypt(order.addressEncrypted()) : null,
+                deliveryService.findByOrderId(orderId));
+    }
+
+    /**
+     * Story 4.1 — seller lifecycle transition. On decline, portions are restored in the same
+     * transaction (Story 2.3 AC2); on ready for a delivery order, the DeliveryJob is created
+     * via the provider interface (Story 4.2 AC2).
+     */
+    @Transactional
+    public Map<String, Object> transition(String sellerId, String orderId, String target) {
+        record Row(String status, String fulfillment, String kitchenSellerId, String buyerId,
+                String kitchenName, String paymentIntentId, int totalCents) {
+        }
+        Row order = db.sql("""
+                SELECT o.status, o.fulfillment, k."sellerId" AS kitchen_seller_id,
+                       o."buyerId", k.name AS kitchen_name, o."paymentIntentId", o."totalCents"
+                FROM "Order" o JOIN "Kitchen" k ON k.id = o."kitchenId"
+                WHERE o.id = :id
+                FOR UPDATE OF o
+                """)
+                .param("id", orderId)
+                .query((rs, n) -> new Row(
+                        rs.getString("status"), rs.getString("fulfillment"),
+                        rs.getString("kitchen_seller_id"), rs.getString("buyerId"),
+                        rs.getString("kitchen_name"), rs.getString("paymentIntentId"),
+                        rs.getInt("totalCents")))
+                .optional()
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
+        if (!sellerId.equals(order.kitchenSellerId())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        }
+        if (!SELLER_TRANSITIONS.getOrDefault(order.status(), Set.of()).contains(target)) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST, "INVALID_TRANSITION:" + order.status() + "->" + target);
+        }
+
+        boolean refunded = false;
+        if ("declined".equals(target)) {
+            record ItemQty(String menuItemId, int qty) {
+            }
+            List<ItemQty> items = db
+                    .sql("SELECT \"menuItemId\", qty FROM \"OrderItem\" WHERE \"orderId\" = :id")
+                    .param("id", orderId)
+                    .query((rs, n) -> new ItemQty(rs.getString("menuItemId"), rs.getInt("qty")))
+                    .list();
+            for (ItemQty item : items) {
+                inventory.restore(item.menuItemId(), item.qty()); // Story 2.3 AC2
+            }
+            eventPublisher.publishEvent(new PortionsChanged(items.stream().map(ItemQty::menuItemId).toList()));
+            // FR21 — a declined order was already paid (confirmed): refund automatically.
+            refunded = order.paymentIntentId() != null
+                    && issueRefund(orderId, order.paymentIntentId(), order.totalCents()) != null;
+        }
+
+        db.sql("UPDATE \"Order\" SET status = :status WHERE id = :id")
+                .param("status", target)
+                .param("id", orderId)
+                .update();
+
+        Map<String, Object> deliveryJob = null;
+        if ("ready".equals(target) && "delivery".equals(order.fulfillment())) {
+            deliveryJob = deliveryService.createForOrder(orderId, sellerId);
+        }
+
+        // FR22 — the buyer follows every seller-driven status change.
+        String trackingUrl = deliveryJob == null ? null : (String) deliveryJob.get("trackingUrl");
+        Map<String, Object> data = trackingUrl == null
+                ? Map.of("orderId", orderId)
+                : Map.of("orderId", orderId, "trackingUrl", trackingUrl);
+        switch (target) {
+            case "accepted" -> notifications.notify(order.buyerId(), "order_accepted", "Order accepted",
+                    order.kitchenName() + " accepted your order.", data);
+            case "declined" -> notifications.notify(order.buyerId(), "order_declined", "Order declined",
+                    order.kitchenName() + " couldn't take your order — "
+                            + (refunded
+                                    ? "your payment was refunded in full."
+                                    : "your portions were released."),
+                    data);
+            case "preparing" -> notifications.notify(order.buyerId(), "order_preparing", "In the kitchen",
+                    order.kitchenName() + " is preparing your food.", data);
+            case "ready" -> notifications.notify(order.buyerId(), "order_ready",
+                    "delivery".equals(order.fulfillment())
+                            ? "Ready — courier on the way" : "Ready for pickup",
+                    "Your order at " + order.kitchenName() + " is ready.", data);
+            case "completed" -> notifications.notify(order.buyerId(), "order_completed", "Order completed",
+                    "Enjoy your meal from " + order.kitchenName() + "!", data);
+            default -> {
+            }
+        }
+
+        db.sql("""
+                INSERT INTO "AuditLog" (id, actor, entity, action, "after")
+                VALUES (:id, :actor, :entity, 'order_status', :after::jsonb)
+                """)
+                .param("id", UUID.randomUUID().toString())
+                .param("actor", sellerId)
+                .param("entity", "Order:" + orderId)
+                .param("after", jsonMapper.writeValueAsString(
+                        Map.of("from", order.status(), "to", target)))
+                .update();
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("id", orderId);
+        result.put("status", target);
+        if (deliveryJob != null) {
+            result.put("deliveryJob", deliveryJob);
+        }
+        return result;
+    }
+
+    /** Story 4.1 — seller order dashboard listing for one kitchen. */
+    public List<Map<String, Object>> listForKitchen(String sellerId, String kitchenId, String status) {
+        String ownerId = db.sql("SELECT \"sellerId\" FROM \"Kitchen\" WHERE id = :id")
+                .param("id", kitchenId)
+                .query(String.class)
+                .optional()
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "KITCHEN_NOT_FOUND"));
+        if (!ownerId.equals(sellerId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        }
+        return db.sql("""
+                SELECT o.id, o.status, o."readySlot", o.fulfillment, o."totalCents", o."createdAt",
+                       dj.provider AS delivery_provider, dj.status AS delivery_status,
+                       dj."trackingUrl" AS delivery_tracking_url,
+                       (SELECT string_agg(d.name || ' x' || oi.qty, ', ' ORDER BY d.name)
+                        FROM "OrderItem" oi
+                        JOIN "MenuItem" mi ON mi.id = oi."menuItemId"
+                        JOIN "Dish" d ON d.id = mi."dishId"
+                        WHERE oi."orderId" = o.id) AS items_summary
+                FROM "Order" o
+                LEFT JOIN "DeliveryJob" dj ON dj."orderId" = o.id
+                WHERE o."kitchenId" = :kitchenId
+                  AND (:status::text IS NULL OR o.status::text = :status)
+                ORDER BY o."createdAt" DESC
+                LIMIT 200
+                """)
+                .param("kitchenId", kitchenId)
+                .param("status", status, java.sql.Types.VARCHAR)
+                .query((rs, n) -> {
+                    Map<String, Object> row = new LinkedHashMap<>();
+                    row.put("id", rs.getString("id"));
+                    row.put("status", rs.getString("status"));
+                    row.put("readySlot", rs.getTimestamp("readySlot").toLocalDateTime());
+                    row.put("fulfillment", rs.getString("fulfillment"));
+                    row.put("totalCents", rs.getInt("totalCents"));
+                    row.put("createdAt", rs.getTimestamp("createdAt").toLocalDateTime());
+                    row.put("itemsSummary", rs.getString("items_summary"));
+                    // Story 4.1 board — delivery-partner status chip (null for pickup / pre-ready)
+                    row.put("deliveryProvider", rs.getString("delivery_provider"));
+                    row.put("deliveryStatus", rs.getString("delivery_status"));
+                    row.put("deliveryTrackingUrl", rs.getString("delivery_tracking_url"));
+                    return row;
+                })
+                .list();
+    }
+
+    /** Buyer order history — mirrors listForKitchen but scoped to the buyer's own orders. */
+    public List<Map<String, Object>> listForBuyer(String buyerId, String status) {
+        return db.sql("""
+                SELECT o.id, o.status, o."readySlot", o.fulfillment, o."totalCents", o."createdAt",
+                       k.name AS kitchen_name, k."cuisineTag" AS cuisine_tag,
+                       dj."trackingUrl" AS delivery_tracking_url,
+                       (r.id IS NOT NULL) AS reviewed,
+                       (SELECT string_agg(d.name || ' x' || oi.qty, ', ' ORDER BY d.name)
+                        FROM "OrderItem" oi
+                        JOIN "MenuItem" mi ON mi.id = oi."menuItemId"
+                        JOIN "Dish" d ON d.id = mi."dishId"
+                        WHERE oi."orderId" = o.id) AS items_summary
+                FROM "Order" o
+                JOIN "Kitchen" k ON k.id = o."kitchenId"
+                LEFT JOIN "DeliveryJob" dj ON dj."orderId" = o.id
+                LEFT JOIN "Review" r ON r."orderId" = o.id
+                WHERE o."buyerId" = :buyerId
+                  AND (:status::text IS NULL OR o.status::text = :status)
+                ORDER BY o."createdAt" DESC
+                LIMIT 200
+                """)
+                .param("buyerId", buyerId)
+                .param("status", status, java.sql.Types.VARCHAR)
+                .query((rs, n) -> {
+                    Map<String, Object> row = new LinkedHashMap<>();
+                    row.put("id", rs.getString("id"));
+                    row.put("status", rs.getString("status"));
+                    row.put("readySlot", rs.getTimestamp("readySlot").toLocalDateTime());
+                    row.put("fulfillment", rs.getString("fulfillment"));
+                    row.put("totalCents", rs.getInt("totalCents"));
+                    row.put("createdAt", rs.getTimestamp("createdAt").toLocalDateTime());
+                    row.put("kitchenName", rs.getString("kitchen_name"));
+                    row.put("cuisineTag", rs.getString("cuisine_tag"));
+                    row.put("itemsSummary", rs.getString("items_summary"));
+                    row.put("deliveryTrackingUrl", rs.getString("delivery_tracking_url"));
+                    row.put("reviewed", rs.getBoolean("reviewed"));
+                    return row;
+                })
+                .list();
     }
 
     @Transactional
@@ -240,6 +575,15 @@ public class OrdersService {
         if (FINAL_STATUSES.contains((String) order.get("status"))) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "NOT_CANCELLABLE");
         }
+        String previousStatus = (String) order.get("status");
+        // Pending = the buyer may still have an open payment sheet: cancel the intent first
+        // so the money can't be captured after we release the portions. If the intent is
+        // already terminal (paid a moment ago), let the succeeded webhook settle it instead.
+        if ("pending".equals(previousStatus)
+                && order.get("paymentIntentId") != null
+                && !payments.tryCancelIntent((String) order.get("paymentIntentId"))) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "PAYMENT_SETTLING");
+        }
         record ItemQty(String menuItemId, int qty) {
         }
         List<ItemQty> items = db.sql("SELECT \"menuItemId\", qty FROM \"OrderItem\" WHERE \"orderId\" = :id")
@@ -251,6 +595,28 @@ public class OrdersService {
         }
         db.sql("UPDATE \"Order\" SET status = 'cancelled' WHERE id = :id").param("id", orderId).update();
         order.put("status", "cancelled");
+        // FR21 — anything past pending was already captured: refund automatically and
+        // tell the buyer (the pending path above never captured, so nothing to return).
+        if (!"pending".equals(previousStatus) && order.get("paymentIntentId") != null) {
+            String refundId = issueRefund(
+                    orderId, (String) order.get("paymentIntentId"), (Integer) order.get("totalCents"));
+            if (refundId != null) {
+                order.put("refundId", refundId);
+                notifications.notify(buyerId, "payment_refunded", "Refund issued",
+                        String.format("Your $%.2f payment is on its way back to you.",
+                                ((Integer) order.get("totalCents")) / 100.0),
+                        Map.of("orderId", orderId));
+            }
+        }
+        // FR22 — the seller learns the slot freed up.
+        String sellerId = db.sql("SELECT \"sellerId\" FROM \"Kitchen\" WHERE id = :id")
+                .param("id", order.get("kitchenId"))
+                .query(String.class)
+                .single();
+        notifications.notify(sellerId, "order_cancelled", "Order cancelled",
+                "The buyer cancelled an order — its portions are back in stock.",
+                Map.of("orderId", orderId));
+        eventPublisher.publishEvent(new PortionsChanged(items.stream().map(ItemQty::menuItemId).toList()));
         return order;
     }
 
@@ -275,17 +641,61 @@ public class OrdersService {
         return row;
     }
 
+    /**
+     * FR21 — refund a captured payment through the provider. Failures never block the
+     * order transition: they are audited (refund_failed) for manual follow-up instead.
+     */
+    private String issueRefund(String orderId, String paymentIntentId, int totalCents) {
+        String refundId = payments.refund(paymentIntentId, totalCents);
+        if (refundId == null) {
+            db.sql("""
+                    INSERT INTO "AuditLog" (id, actor, entity, action, "after")
+                    VALUES (:id, 'payments', :entity, 'refund_failed', :after::jsonb)
+                    """)
+                    .param("id", UUID.randomUUID().toString())
+                    .param("entity", "Order:" + orderId)
+                    .param("after", jsonMapper.writeValueAsString(
+                            Map.of("paymentIntentId", paymentIntentId, "amountCents", totalCents)))
+                    .update();
+            return null;
+        }
+        db.sql("UPDATE \"Order\" SET \"refundId\" = :refundId, \"refundedAt\" = now() WHERE id = :id")
+                .param("refundId", refundId)
+                .param("id", orderId)
+                .update();
+        db.sql("""
+                INSERT INTO "AuditLog" (id, actor, entity, action, "after")
+                VALUES (:id, 'payments', :entity, 'payment_refunded', :after::jsonb)
+                """)
+                .param("id", UUID.randomUUID().toString())
+                .param("entity", "Order:" + orderId)
+                .param("after", jsonMapper.writeValueAsString(
+                        Map.of("refundId", refundId, "amountCents", totalCents)))
+                .update();
+        return refundId;
+    }
+
     /** Accepts ISO datetimes with or without offset, mirroring JS `new Date(string)`. */
     private static LocalDateTime parseReadySlot(String value) {
+        String v = value.trim();
         try {
-            return LocalDateTime.ofInstant(Instant.parse(value), ZoneOffset.UTC);
-        } catch (DateTimeParseException e) {
-            try {
-                return LocalDateTime.parse(value);
-            } catch (DateTimeParseException e2) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "READY_SLOT_INVALID");
+            return LocalDateTime.ofInstant(Instant.parse(v), ZoneOffset.UTC);
+        } catch (DateTimeParseException ignored) {
+        }
+        try {
+            return LocalDateTime.parse(v);
+        } catch (DateTimeParseException ignored) {
+        }
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("^(\\d{1,2}):(\\d{2})").matcher(v);
+        if (m.find()) {
+            int hour = Integer.parseInt(m.group(1));
+            int minute = Integer.parseInt(m.group(2));
+            if (hour <= 23 && minute <= 59) {
+                return java.time.LocalDate.now(ZoneOffset.UTC).atTime(hour, minute);
             }
         }
+        throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "READY_SLOT_INVALID: use ISO datetime (2026-07-10T17:00:00Z) or HH:mm");
     }
 
     private static List<String> stringList(ResultSet rs, String column) throws SQLException {

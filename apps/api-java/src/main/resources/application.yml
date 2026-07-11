@@ -4,6 +4,11 @@ server:
 spring:
   application:
     name: nanas-kitchens-api
+  servlet:
+    multipart:
+      # Story 1.3 AC2 — kitchen photo uploads are capped at 5 MB
+      max-file-size: 5MB
+      max-request-size: 6MB
   web:
     error:
       # Clients (web UI, agent) read error codes like MENU_NOT_PUBLISHED from the message
@@ -25,13 +30,37 @@ spring:
       # Prisma tables/columns are quoted camelCase ("User"."passwordHash"); quote everything.
       hibernate.globally_quoted_identifiers: true
   ai:
+    # Both starters are on the classpath; this picks which ChatModel autoconfigures.
+    # Dev default is Gemini (free tier); set AI_PROVIDER=anthropic for the full version.
+    model:
+      chat: ${AI_PROVIDER:google-genai}
+    # Free-tier RPM cap: the agentic tool loop makes several model calls per user message,
+    # so 429s are expected in bursts. Back off and retry instead of failing the request.
+    retry:
+      max-attempts: 4
+      on-http-codes: [429, 503]
+      backoff:
+        initial-interval: 3s
+        multiplier: 2
     anthropic:
       api-key: ${ANTHROPIC_API_KEY:}
       chat:
         options:
           model: claude-opus-4-8
+    google:
+      genai:
+        api-key: ${GEMINI_API_KEY:}
+        chat:
+          options:
+            # "-latest" aliases track current models, so retired ids (e.g.
+            # gemini-2.5-flash, gone 2026-07) don't 404 the chat agent. Lite tier
+            # because the free-tier flash alias frequently 503s under load.
+            model: ${GEMINI_MODEL:gemini-flash-lite-latest}
 
 app:
+  stripe:
+    # Test-mode key (sk_test_...). Empty = payments skipped (orders confirm without charge).
+    secret-key: ${STRIPE_SECRET_KEY:}
   jwt:
     # Shared with the NestJS service's JWT_SECRET so access tokens are valid on both
     # backends during the migration. Must be >= 32 bytes (HS256 key requirement).
@@ -39,3 +68,57 @@ app:
     access-token-ttl-minutes: 15
     refresh-token-ttl-days: 30
   address-enc-key: ${ADDRESS_ENC_KEY:32-byte-hex-key-change-me-0000000000}
+  delivery:
+    # mock | doordash | grubhub — mock ships until partner sandbox credentials exist
+    # (architecture.md risk mitigation: same provider interface, pickup-only launch flag).
+    provider: ${DELIVERY_PROVIDER:mock}
+    mock-fee-cents: 399
+    webhook-secret: ${DELIVERY_WEBHOOK_SECRET:dev-delivery-webhook-secret}
+  menus:
+    # Daily rollover (UTC midnight trap fix): republishes each kitchen's latest published
+    # menu for the new UTC day with fresh portions. Idempotent; skips kitchens that already
+    # have a MenuDay today. Dev/demo default — set MENU_DAILY_ROLLOVER=false when sellers
+    # are expected to publish daily themselves.
+    daily-rollover: ${MENU_DAILY_ROLLOVER:true}
+  payments:
+    # mock | stripe (Story 3.4) — mock settles instantly so the demo needs no Stripe keys;
+    # stripe creates real PaymentIntents and settles orders via /webhooks/stripe.
+    provider: ${PAYMENTS_PROVIDER:mock}
+    # Abandoned pending orders (payment sheet never completed) are released after ~30 min.
+    pending-sweep-delay-ms: 300000
+    stripe:
+      secret-key: ${STRIPE_SECRET_KEY:}
+      publishable-key: ${STRIPE_PUBLISHABLE_KEY:}
+      webhook-secret: ${STRIPE_WEBHOOK_SECRET:}
+  notifications:
+    # Comma-separated external fan-out (Story 4.4). The in-app inbox always works; this
+    # only picks the "buzz the device" channels: log | email | webhook.
+    #   email   — active when spring.mail.host is set (SES/Mailgun/Postfix/Mailpit)
+    #   webhook — active when app.notifications.webhook.url is set (FCM/APNs relay)
+    # e.g. NOTIFICATIONS_CHANNELS=log,email,webhook
+    channels: ${NOTIFICATIONS_CHANNELS:log}
+    email:
+      from: ${NOTIFICATIONS_EMAIL_FROM:no-reply@nanaskitchens.com}
+    webhook:
+      url: ${NOTIFICATIONS_WEBHOOK_URL:}
+      secret: ${NOTIFICATIONS_WEBHOOK_SECRET:}
+  storage:
+    # local | s3 (Story 1.3 AC2) — local disk + /files/{name} until S3 credentials exist;
+    # the S3 impl will return signed URLs behind the same PhotoStorage interface.
+    provider: ${STORAGE_PROVIDER:local}
+    local-dir: ${UPLOADS_DIR:uploads}
+    public-base-url: ${PUBLIC_BASE_URL:http://localhost:8080}
+  geocoding:
+    # OpenStreetMap Nominatim (Story 1.3 AC1); on failure the UI falls back to manual
+    # lat/lng entry (AC4). Point base-url at a mock in tests.
+    base-url: ${GEOCODING_BASE_URL:https://nominatim.openstreetmap.org}
+    user-agent: ${GEOCODING_USER_AGENT:NanasKitchens/1.0 (dev)}
+  stt:
+    # mock | whisper (Story 5.3, FR13) — mock returns a canned transcript so the voice
+    # pipeline demos without OpenAI credentials; tune mock-confidence below the UI's
+    # 0.85 review threshold to exercise the low-confidence clarify path (Story 5.2 AC4).
+    provider: ${STT_PROVIDER:mock}
+    mock-text: ${STT_MOCK_TEXT:What Turkish kitchens are near me today?}
+    mock-confidence: ${STT_MOCK_CONFIDENCE:0.95}
+    openai-api-key: ${OPENAI_API_KEY:}
+    openai-base-url: ${OPENAI_BASE_URL:https://api.openai.com}

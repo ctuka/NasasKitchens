@@ -121,6 +121,12 @@ importers:
 
   apps/web:
     dependencies:
+      '@stripe/react-stripe-js':
+        specifier: ^6.7.0
+        version: 6.7.0(@stripe/stripe-js@9.9.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@stripe/stripe-js':
+        specifier: ^9.9.0
+        version: 9.9.0
       next:
         specifier: ^15.0.0
         version: 15.5.19(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
@@ -1096,6 +1102,17 @@ packages:
 
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
+
+  '@stripe/react-stripe-js@6.7.0':
+    resolution: {integrity: sha512-KSWTQHcDlAOlxcOz+uq0pTA/k9G4+IBF/X8mtSFkkBX+nb74buMTIFcCUCHWNhjuPqfD+yJm7NWDan1EaxSyzQ==}
+    peerDependencies:
+      '@stripe/stripe-js': '>=9.5.0 <10.0.0'
+      react: '>=16.8.0 <20.0.0'
+      react-dom: '>=16.8.0 <20.0.0'
+
+  '@stripe/stripe-js@9.9.0':
+    resolution: {integrity: sha512-Vwqe6Q5cU4i82tPyAv2BpaW/fQSNdOSO4/J8EeDLPp5/oIZiMmdB+Hgh863zFH+rtoxpuWGvD1L7QPh8k1Rdvw==}
+    engines: {node: '>=12.16'}
 
   '@swc/helpers@0.5.15':
     resolution: {integrity: sha512-JQ5TuMi45Owi4/BIMAJBoSQoOJu12oOk/gADqlcUL9JEdHB8vyjUSsxqeNXnmXHjYKMi2WcYtezGEEhqUI/E2g==}
@@ -2387,6 +2404,10 @@ packages:
     resolution: {integrity: sha512-8XPvpAA8uyhfteu8pIvQxpJZ7SYYdpUivZpGy6sFsBuKRY/7rQGavedeB8aK+Zkyq6upMFVL/9AW6vOYzfRyLg==}
     engines: {node: '>=10'}
 
+  loose-envify@1.4.0:
+    resolution: {integrity: sha512-lyuxPGr/Wfhrlem2CL/UcnUc1zcqKAImBDzukY7Y5F/yQiNdko6+fRLevlw1HgMySw7f611UIY408EtxRSoK3Q==}
+    hasBin: true
+
   lru-cache@11.5.1:
     resolution: {integrity: sha512-RPimw/7aMdv2oqRrxKwvZXcPfwBrn/JZ2xYcY9Hus/6LaS3VOAKVWKWgNLCFSiOm1ESXinjsDlidVU7JlnCN2A==}
     engines: {node: 20 || >=22}
@@ -2723,6 +2744,9 @@ packages:
     resolution: {integrity: sha512-NxNv/kLguCA7p3jE8oL2aEBsrJWgAakBpgmgK6lpPWV+WuOmY6r2/zbAVnP+T8bQlA0nzHXSJSJW0Hq7ylaD2Q==}
     engines: {node: '>= 6'}
 
+  prop-types@15.8.1:
+    resolution: {integrity: sha512-oj87CgZICdulUohogVAR7AjlC0327U4el4L6eAvOqCeudMDVU0NThNaV+b9Df4dXgSP1gXMTnPdhfe/2qDH5cg==}
+
   proxy-addr@2.0.7:
     resolution: {integrity: sha512-llQsMLSUDUPT44jdrU/O37qlnifitDP+ZwrmmZcoSKyLKvtZxpyV0n2/bD/N4tBAAZ/gJEdZU7KMraoK1+XYAg==}
     engines: {node: '>= 0.10'}
@@ -2753,6 +2777,9 @@ packages:
     resolution: {integrity: sha512-t0BRVXvbiE/o20Hfw669rLbMCDWtYZLvmJigy2f0MxsXF+71pxhR3xOkspmsO8h3ZlNzyibAmtCa3l4lYKk6gQ==}
     peerDependencies:
       react: ^19.2.7
+
+  react-is@16.13.1:
+    resolution: {integrity: sha512-24e6ynE2H+OKt4kqsOvNd8kBpV65zoxbA4BVsEOB3ARVWQki/DHzaUoC5KuON/BiccDaCCTZBuOcfZs70kR8bQ==}
 
   react-is@18.3.1:
     resolution: {integrity: sha512-/LLMVyas0ljjAtoYiPqYiL8VWXzUUdThrmU5+n20DZv+a+ClRoevUzw5JxU+Ieh5/c87ytoTBV9G1FiKfNJdmg==}
@@ -4318,6 +4345,15 @@ snapshots:
       '@sinonjs/commons': 3.0.1
 
   '@standard-schema/spec@1.1.0': {}
+
+  '@stripe/react-stripe-js@6.7.0(@stripe/stripe-js@9.9.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
+    dependencies:
+      '@stripe/stripe-js': 9.9.0
+      prop-types: 15.8.1
+      react: 19.2.7
+      react-dom: 19.2.7(react@19.2.7)
+
+  '@stripe/stripe-js@9.9.0': {}
 
   '@swc/helpers@0.5.15':
     dependencies:
@@ -5893,6 +5929,10 @@ snapshots:
       chalk: 4.1.2
       is-unicode-supported: 0.1.0
 
+  loose-envify@1.4.0:
+    dependencies:
+      js-tokens: 4.0.0
+
   lru-cache@11.5.1: {}
 
   lru-cache@5.1.1:
@@ -6177,6 +6217,12 @@ snapshots:
       kleur: 3.0.3
       sisteransi: 1.0.5
 
+  prop-types@15.8.1:
+    dependencies:
+      loose-envify: 1.4.0
+      object-assign: 4.1.1
+      react-is: 16.13.1
+
   proxy-addr@2.0.7:
     dependencies:
       forwarded: 0.2.0
@@ -6208,6 +6254,8 @@ snapshots:
     dependencies:
       react: 19.2.7
       scheduler: 0.27.0
+
+  react-is@16.13.1: {}
 
   react-is@18.3.1: {}
 
